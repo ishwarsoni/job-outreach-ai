@@ -1,0 +1,14 @@
+# Core
+ddgs>=9.10,<10
+dnspython>=2.6,<3
+googlesearch-python>=1.3,<2
+openai>=1.0,<2
+python-dotenv>=1.0,<2
+
+# Web server
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+
+# Optional — only needed if you extend scraping to JS-rendered pages
+# selenium>=4.20,<5
+# webdriver-manager>=4.0,<5
