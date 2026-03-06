@@ -4,8 +4,8 @@
  * Handles:
  *   - Form submission → SSE stream from /api/search
  *   - Pipeline stepper progress updates
- *   - Results table rendering (real-time row additions)
- *   - Email preview panel
+ *   - Results card grid rendering (real-time)
+ *   - Email preview drawer
  *   - CSV download
  *   - Toast notifications
  */
@@ -15,13 +15,13 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 const dom = {
     // Form
-    searchForm:     document.getElementById('search-form'),
-    inputCompany:   document.getElementById('input-company'),
-    inputTitle:     document.getElementById('input-title'),
-    inputDomain:    document.getElementById('input-domain'),
-    inputMaxResults:document.getElementById('input-max-results'),
-    inputDryRun:    document.getElementById('input-dry-run'),
-    btnSearch:      document.getElementById('btn-search'),
+    searchForm: document.getElementById('search-form'),
+    inputCompany: document.getElementById('input-company'),
+    inputTitle: document.getElementById('input-title'),
+    inputDomain: document.getElementById('input-domain'),
+    inputMaxResults: document.getElementById('input-max-results'),
+    inputDryRun: document.getElementById('input-dry-run'),
+    btnSearch: document.getElementById('btn-search'),
 
     // Pipeline stepper
     pipelineSection: document.getElementById('pipeline-section'),
@@ -29,27 +29,27 @@ const dom = {
 
     // Results
     resultsSection: document.getElementById('results-section'),
-    resultsBody:    document.getElementById('results-body'),
-    resultsCount:   document.getElementById('results-count'),
+    resultsBody: document.getElementById('results-body'),
+    resultsCount: document.getElementById('results-count'),
 
     // Empty state
-    emptyState:     document.getElementById('empty-state'),
+    emptyState: document.getElementById('empty-state'),
 
     // Email panel
-    emailOverlay:   document.getElementById('email-overlay'),
-    panelTo:        document.getElementById('panel-to'),
-    panelSubject:   document.getElementById('panel-subject'),
-    panelBody:      document.getElementById('panel-body'),
-    btnClosePanel:  document.getElementById('btn-close-panel'),
-    btnCopyEmail:   document.getElementById('btn-copy-email'),
-    copyText:       document.getElementById('copy-text'),
+    emailOverlay: document.getElementById('email-overlay'),
+    panelTo: document.getElementById('panel-to'),
+    panelSubject: document.getElementById('panel-subject'),
+    panelBody: document.getElementById('panel-body'),
+    btnClosePanel: document.getElementById('btn-close-panel'),
+    btnCopyEmail: document.getElementById('btn-copy-email'),
+    copyText: document.getElementById('copy-text'),
 
     // Download
-    btnDownload:    document.getElementById('btn-download'),
+    btnDownload: document.getElementById('btn-download'),
 
     // Toast
-    toast:          document.getElementById('toast'),
-    toastMessage:   document.getElementById('toast-message'),
+    toast: document.getElementById('toast'),
+    toastMessage: document.getElementById('toast-message'),
 };
 
 
@@ -64,11 +64,6 @@ let activeEventSource = null;
    Toast Notifications
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Show a brief toast message at the bottom of the screen.
- * @param {string} message - Text to display
- * @param {number} duration - How long to show in ms (default 2500)
- */
 function showToast(message, duration = 2500) {
     dom.toastMessage.textContent = message;
     dom.toast.classList.add('show');
@@ -80,9 +75,6 @@ function showToast(message, duration = 2500) {
    Pipeline Stepper
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Reset all pipeline steps to their initial "waiting" state.
- */
 function resetStepper() {
     for (let i = 1; i <= 4; i++) {
         const stepEl = dom.pipelineStepper.querySelector(`[data-step="${i}"]`);
@@ -91,12 +83,6 @@ function resetStepper() {
     }
 }
 
-/**
- * Update a pipeline step's visual state and message.
- * @param {number} stepNum - Step number (1–4)
- * @param {'running'|'done'} status - Current status
- * @param {string} message - Status message to display
- */
 function updateStep(stepNum, status, message) {
     const stepEl = dom.pipelineStepper.querySelector(`[data-step="${stepNum}"]`);
     if (!stepEl) return;
@@ -110,115 +96,85 @@ function updateStep(stepNum, status, message) {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Results Table
+   Results — Card Grid
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Render all profiles into the results table.
- * @param {Array<Object>} profiles - Array of profile objects
- */
 function renderResults(profiles) {
     currentProfiles = profiles;
     dom.resultsBody.innerHTML = '';
 
     profiles.forEach((profile, index) => {
-        const row = document.createElement('tr');
-        row.classList.add('fade-in');
-        row.style.animationDelay = `${index * 50}ms`;
+        const card = document.createElement('div');
+        card.classList.add('profile-card', 'fade-in');
+        card.style.animationDelay = `${index * 60}ms`;
 
-        // Name
-        const nameCell = document.createElement('td');
-        nameCell.classList.add('cell-name');
-        nameCell.textContent = profile.full_name || '—';
+        // Initials avatar
+        const initials = ((profile.first_name?.[0] || '') + (profile.last_name?.[0] || '')).toUpperCase() || '?';
 
-        // Title
-        const titleCell = document.createElement('td');
-        titleCell.textContent = profile.job_title || '—';
+        // Email display
+        const emailHtml = profile.validated_email
+            ? `<span class="card-email">${profile.validated_email}</span>`
+            : `<span class="card-email card-email--pending">Pending…</span>`;
 
-        // Company
-        const companyCell = document.createElement('td');
-        companyCell.classList.add('td-company');
-        companyCell.textContent = profile.company || '—';
-
-        // Email
-        const emailCell = document.createElement('td');
-        if (profile.validated_email) {
-            emailCell.classList.add('cell-email');
-            emailCell.textContent = profile.validated_email;
-        } else {
-            emailCell.classList.add('cell-email', 'placeholder');
-            emailCell.textContent = 'Pending...';
-        }
-
-        // LinkedIn
-        const linkCell = document.createElement('td');
-        if (profile.profile_url) {
-            const link = document.createElement('a');
-            link.href = profile.profile_url;
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.classList.add('cell-link');
-            link.innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                    <polyline points="15 3 21 3 21 9"></polyline>
-                    <line x1="10" y1="14" x2="21" y2="3"></line>
-                </svg>
-                Profile
-            `;
-            linkCell.appendChild(link);
-        } else {
-            linkCell.textContent = '—';
-        }
+        // LinkedIn link
+        const linkedinHtml = profile.profile_url
+            ? `<a href="${profile.profile_url}" target="_blank" rel="noopener noreferrer" class="card-link" title="View LinkedIn">
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                       <polyline points="15 3 21 3 21 9"></polyline>
+                       <line x1="10" y1="14" x2="21" y2="3"></line>
+                   </svg>
+                   LinkedIn
+               </a>`
+            : '';
 
         // Draft button
-        const draftCell = document.createElement('td');
-        const draftBtn = document.createElement('button');
-        draftBtn.classList.add('btn-view-draft');
-        draftBtn.dataset.index = index;
+        const draftHtml = profile.email_body
+            ? `<button class="card-btn card-btn--draft" data-index="${index}">
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                       <circle cx="12" cy="12" r="3"></circle>
+                   </svg>
+                   View Draft
+               </button>`
+            : `<button class="card-btn card-btn--draft" disabled>No Draft</button>`;
 
-        if (profile.email_body) {
-            draftBtn.innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-                View
-            `;
+        card.innerHTML = `
+            <div class="card-top">
+                <div class="card-avatar">${initials}</div>
+                <div class="card-info">
+                    <p class="card-name">${profile.full_name || '—'}</p>
+                    <p class="card-role">${profile.job_title || '—'} <span class="card-at">at</span> ${profile.company || '—'}</p>
+                </div>
+            </div>
+            <div class="card-details">
+                ${emailHtml}
+            </div>
+            <div class="card-actions">
+                ${linkedinHtml}
+                ${draftHtml}
+            </div>
+        `;
+
+        // Wire up draft button click
+        const draftBtn = card.querySelector('.card-btn--draft:not([disabled])');
+        if (draftBtn) {
             draftBtn.addEventListener('click', () => openEmailPanel(index));
-        } else {
-            draftBtn.innerHTML = '—';
-            draftBtn.disabled = true;
         }
-        draftCell.appendChild(draftBtn);
 
-        // Assemble row
-        row.appendChild(nameCell);
-        row.appendChild(titleCell);
-        row.appendChild(companyCell);
-        row.appendChild(emailCell);
-        row.appendChild(linkCell);
-        row.appendChild(draftCell);
-
-        dom.resultsBody.appendChild(row);
+        dom.resultsBody.appendChild(card);
     });
 
-    // Update count badge
     dom.resultsCount.textContent = `${profiles.length} found`;
 }
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Email Preview Panel
+   Email Preview Drawer
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/** Profile index currently shown in the email panel. */
 let currentEmailIndex = -1;
 
-/**
- * Open the email preview overlay for a given profile index.
- * @param {number} index - Index into currentProfiles
- */
 function openEmailPanel(index) {
     const profile = currentProfiles[index];
     if (!profile || !profile.email_body) return;
@@ -226,12 +182,10 @@ function openEmailPanel(index) {
     currentEmailIndex = index;
     const body = profile.email_body;
 
-    // Parse subject line (first line) from the email body
     const lines = body.split('\n');
     let subject = '';
     let emailContent = body;
 
-    // If the first line looks like "Subject: ..." extract it
     if (lines[0] && lines[0].toLowerCase().startsWith('subject:')) {
         subject = lines[0].replace(/^subject:\s*/i, '').trim();
         emailContent = lines.slice(1).join('\n').trim();
@@ -248,13 +202,11 @@ function openEmailPanel(index) {
     dom.emailOverlay.classList.add('open');
 }
 
-/** Close the email preview overlay. */
 function closeEmailPanel() {
     dom.emailOverlay.classList.remove('open');
     currentEmailIndex = -1;
 }
 
-/** Copy the current email body to the clipboard. */
 async function copyEmailToClipboard() {
     if (currentEmailIndex < 0) return;
     const profile = currentProfiles[currentEmailIndex];
@@ -277,26 +229,20 @@ async function copyEmailToClipboard() {
    Search Pipeline (SSE)
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Submit the search form and open an SSE connection to stream results.
- * @param {Event} event - Form submit event
- */
 async function handleSearch(event) {
     event.preventDefault();
 
-    const company    = dom.inputCompany.value.trim();
-    const title      = dom.inputTitle.value.trim();
-    const domain     = dom.inputDomain.value.trim();
+    const company = dom.inputCompany.value.trim();
+    const title = dom.inputTitle.value.trim();
+    const domain = dom.inputDomain.value.trim();
     const maxResults = parseInt(dom.inputMaxResults.value, 10) || 10;
-    const dryRun     = dom.inputDryRun.checked;
+    const dryRun = dom.inputDryRun.checked;
 
-    // Validate
     if (!company || !title) {
         showToast('Please enter both a company and job title');
         return;
     }
 
-    // Abort any in-flight stream
     if (activeEventSource) {
         activeEventSource.close();
         activeEventSource = null;
@@ -314,7 +260,6 @@ async function handleSearch(event) {
     currentProfiles = [];
 
     try {
-        // We use fetch + ReadableStream because SSE with POST requires it
         const response = await fetch('/api/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -326,7 +271,6 @@ async function handleSearch(event) {
             throw new Error(err.error || `HTTP ${response.status}`);
         }
 
-        // Read the SSE stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -337,25 +281,18 @@ async function handleSearch(event) {
 
             buffer += decoder.decode(value, { stream: true });
 
-            // Parse SSE messages (format: "event: type\ndata: json\n\n")
             const messages = buffer.split('\n\n');
-            buffer = messages.pop(); // Keep incomplete message in buffer
+            buffer = messages.pop();
 
             for (const msg of messages) {
                 if (!msg.trim()) continue;
                 const eventMatch = msg.match(/^event:\s*(.+)/m);
-                const dataMatch  = msg.match(/^data:\s*(.+)/m);
-
+                const dataMatch = msg.match(/^data:\s*(.+)/m);
                 if (!eventMatch || !dataMatch) continue;
 
                 const eventType = eventMatch[1].trim();
                 let eventData;
-                try {
-                    eventData = JSON.parse(dataMatch[1]);
-                } catch {
-                    continue;
-                }
-
+                try { eventData = JSON.parse(dataMatch[1]); } catch { continue; }
                 handleSSEEvent(eventType, eventData);
             }
         }
@@ -368,11 +305,6 @@ async function handleSearch(event) {
     }
 }
 
-/**
- * Handle a single SSE event from the pipeline.
- * @param {string} type - Event type (step, profiles, complete, error, etc.)
- * @param {Object} data - Parsed event data
- */
 function handleSSEEvent(type, data) {
     switch (type) {
         case 'step':
@@ -380,7 +312,6 @@ function handleSSEEvent(type, data) {
             break;
 
         case 'profiles':
-            // Show the results section and render profiles
             dom.resultsSection.style.display = '';
             dom.resultsSection.classList.add('fade-in');
             renderResults(data.profiles);
@@ -399,8 +330,6 @@ function handleSSEEvent(type, data) {
         case 'complete':
             dom.btnDownload.disabled = false;
             showToast(data.message || 'Pipeline complete!');
-
-            // Re-render with final data if available
             if (data.dry_run) {
                 dom.btnDownload.disabled = true;
             }
@@ -415,10 +344,6 @@ function handleSSEEvent(type, data) {
     }
 }
 
-/**
- * Toggle the search button between normal and loading states.
- * @param {boolean} loading - Whether the pipeline is running
- */
 function setSearchLoading(loading) {
     if (loading) {
         dom.btnSearch.classList.add('loading');
@@ -434,7 +359,6 @@ function setSearchLoading(loading) {
    CSV Download
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/** Trigger a download of the outreach CSV. */
 function downloadCSV() {
     window.open('/api/download', '_blank');
 }
@@ -448,12 +372,10 @@ dom.btnClosePanel.addEventListener('click', closeEmailPanel);
 dom.btnCopyEmail.addEventListener('click', copyEmailToClipboard);
 dom.btnDownload.addEventListener('click', downloadCSV);
 
-// Close overlay on backdrop click
 dom.emailOverlay.addEventListener('click', (e) => {
     if (e.target === dom.emailOverlay) closeEmailPanel();
 });
 
-// Close overlay on Escape key
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeEmailPanel();
 });

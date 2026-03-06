@@ -46,6 +46,7 @@ FIELDNAMES: list[str] = [
     "domain",
     "profile_url",
     "validated_email",
+    "email_body",
 ]
 
 

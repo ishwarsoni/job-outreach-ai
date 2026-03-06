@@ -276,10 +276,10 @@ def main() -> int:
     # Step 2 — Validate emails
     profiles = step_validate(profiles)
 
-    # Step 3 — Draft emails (disabled — email_body removed from CSV)
-    # profiles = step_draft(profiles)
+    # Step 3 — Draft emails
+    profiles = step_draft(profiles)
 
-    # Step 3 — Export
+    # Step 4 — Export
     step_export(profiles, args.output)
 
     logger.info("Pipeline complete.")

@@ -5,11 +5,12 @@ Uses ``googlesearch-python`` as the primary search engine (far more accurate
 results than DuckDuckGo) with ``duckduckgo_search`` (DDGS) as a fallback
 when Google rate-limits.
 
-Key improvements over DuckDuckGo-only approach:
-  - Google returns more relevant LinkedIn profiles
-  - Multiple query patterns for broader coverage
-  - Relevance filtering: only keeps profiles whose snippet mentions the company
-  - De-duplication across query attempts
+Key accuracy features:
+  - Google Search with tight site:linkedin.com/in queries
+  - DuckDuckGo enrichment for title/snippet data
+  - Mandatory LLM verification to filter false positives
+  - Name validation (rejects job-title-like names)
+  - Company-mention relevance filtering
 
 Public API
 ----------
@@ -18,6 +19,7 @@ Public API
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -25,6 +27,9 @@ from urllib.parse import urlparse
 
 from googlesearch import search as google_search
 from ddgs import DDGS
+from openai import OpenAI
+
+import config
 
 # ---------------------------------------------------------------------------
 # Logger
@@ -35,6 +40,21 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Words that indicate a scraped "name" is actually a job title, not a person
+_TITLE_WORDS = frozenset({
+    "lead", "recruiter", "manager", "engineer", "director", "specialist",
+    "coordinator", "consultant", "analyst", "developer", "designer",
+    "founder", "co-founder", "cofounder", "ceo", "cto", "cfo", "coo", "vp",
+    "president", "head", "chief", "officer", "partner", "architect",
+    "scientist", "professor", "teacher", "instructor", "associate",
+    "intern", "trainee", "senior", "junior", "staff", "principal",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -66,17 +86,15 @@ def _clean_name(raw_title: str) -> str:
     # Step 4 -- collapse multiple spaces
     name_part = re.sub(r"\s{2,}", " ", name_part)
 
+    # Step 5 -- remove credential suffixes like MBA, PhD, PMP, CPA, etc.
+    name_part = re.sub(r",?\s+(?:MBA|PhD|PMP|CPA|PE|MD|JD|CFA|CISSP|PgMP|CSM)\.?$",
+                       "", name_part, flags=re.IGNORECASE).strip()
+
     return name_part
 
 
 def _split_name(full_name: str) -> tuple[str, str]:
-    """Split *full_name* into (first_name, last_name).
-
-    If only one token is present, last_name is returned as an empty string.
-    For names with three or more tokens the first token is the first name and
-    the rest are joined as the last name (e.g. "Mary Jane Watson" ->
-    ("Mary", "Jane Watson")).
-    """
+    """Split *full_name* into (first_name, last_name)."""
     parts = full_name.split()
     if len(parts) == 0:
         return ("", "")
@@ -94,33 +112,47 @@ def _normalize_linkedin_url(url: str) -> str:
     """Normalize a LinkedIn URL for dedup (strip query params, trailing slash)."""
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
-    # Keep only the /in/username part
     return f"https://www.linkedin.com{path}" if "/in/" in path else url
 
 
+def _name_from_url_slug(url: str) -> str:
+    """Extract a name from the LinkedIn URL slug (e.g. /in/rohit-negi -> Rohit Negi)."""
+    match = re.search(r"linkedin\.com/in/([^/?#]+)", url)
+    if not match:
+        return ""
+    slug = match.group(1)
+    # Remove trailing hash IDs and numbers
+    slug = re.sub(r"-[a-f0-9]{6,}$", "", slug)
+    slug = re.sub(r"-\d+$", "", slug)
+    parts = slug.split("-")
+    return " ".join(p.capitalize() for p in parts if p)
+
+
+def _looks_like_title(name: str) -> bool:
+    """Return True if *name* looks like a job title rather than a person's name."""
+    words = {w.lower() for w in name.split()}
+    # If more than half the words are title-words, it's probably a title
+    overlap = words & _TITLE_WORDS
+    if len(overlap) >= max(1, len(words) * 0.5):
+        return True
+    return False
+
+
 def _company_mentioned_in_snippet(snippet: str, company: str) -> bool:
-    """Check if the company name appears in the search snippet (case-insensitive).
-
-    Also handles partial matches -- e.g. "Coder Army" matches "CoderArmy" or
-    "coder army" in the snippet.
-    """
+    """Check if the company name appears in the search snippet."""
     if not snippet or not company:
-        return True  # Can't filter if no snippet, so include it
-
+        return True  # Can't filter if no snippet
     snippet_lower = snippet.lower()
     company_lower = company.lower()
 
-    # Exact match
     if company_lower in snippet_lower:
         return True
 
-    # Match without spaces (e.g. "Coder Army" -> "coderarmy")
-    company_no_space = company_lower.replace(" ", "")
-    snippet_no_space = snippet_lower.replace(" ", "")
-    if company_no_space in snippet_no_space:
+    # Without spaces
+    if company_lower.replace(" ", "") in snippet_lower.replace(" ", ""):
         return True
 
-    # Match individual significant words (each word with 4+ chars must appear)
+    # All significant words present
     words = [w for w in company_lower.split() if len(w) >= 4]
     if words and all(w in snippet_lower for w in words):
         return True
@@ -133,7 +165,7 @@ def _company_mentioned_in_snippet(snippet: str, company: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _search_google(query: str, max_results: int) -> list[dict]:
-    """Search Google and return results as list of dicts with url + title."""
+    """Search Google and return LinkedIn profile URLs."""
     results = []
     try:
         for url in google_search(query, num_results=max_results * 3, sleep_interval=2, lang="en"):
@@ -164,13 +196,8 @@ def _search_ddgs(query: str, max_results: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# LLM-based verification (NVIDIA Devstral)
+# LLM verification
 # ---------------------------------------------------------------------------
-
-import json
-from openai import OpenAI
-import config
-
 
 def _get_llm_client() -> OpenAI:
     """Return a configured OpenAI client for NVIDIA NIM."""
@@ -186,64 +213,70 @@ def _llm_verify_candidates(
     company: str,
     max_results: int,
 ) -> list[dict]:
-    """Use LLM to verify which candidates actually hold *job_title* at *company*.
+    """Use LLM to verify which candidates ACTUALLY hold *job_title* at *company*.
 
-    Sends a single batch prompt with all candidates' LinkedIn titles and
-    snippets, asks the LLM to return only the indices of verified matches.
+    This is the critical accuracy gate. The LLM examines each candidate's
+    LinkedIn headline, snippet, and URL slug to determine if they genuinely
+    hold the specified role at the target company.
     """
     if not config.NVIDIA_API_KEY:
         logger.warning("NVIDIA_API_KEY not set — skipping LLM verification.")
         return candidates[:max_results]
 
-    # Build the candidate list for the prompt
+    # Build candidate descriptions for the prompt
     candidate_lines = []
     for i, c in enumerate(candidates):
         title = c.get("_raw_title", "")
         snippet = c.get("_snippet", "")
+        url = c.get("profile_url", "")
+        slug_name = _name_from_url_slug(url)
+
         candidate_lines.append(
             f"  [{i}] Name: {c['full_name']}\n"
-            f"      LinkedIn Headline: {title}\n"
-            f"      Page Snippet: {snippet[:300]}"
+            f"      URL slug: {slug_name}\n"
+            f"      LinkedIn Headline: {title or '(not available)'}\n"
+            f"      Page Snippet: {snippet[:300] if snippet else '(not available)'}"
         )
 
     candidates_text = "\n".join(candidate_lines)
 
-    prompt = f"""I searched LinkedIn for people with the role "{job_title}" at the company "{company}".
-Below are candidates. MOST of them are FALSE POSITIVES — they just mention "{company}" somewhere on their profile (e.g. in a post, comment, or course they took) but do NOT actually hold the role "{job_title}" at "{company}".
+    prompt = f"""I am searching for people who hold the role "{job_title}" at the company "{company}".
+I found the following LinkedIn profiles via web search. MANY of them are FALSE POSITIVES.
 
 CANDIDATES:
 {candidates_text}
 
-TASK: Return ONLY the index numbers of candidates who ACTUALLY hold the role "{job_title}" (or a very similar role like Co-Founder, Founder & CEO, etc.) specifically AT "{company}".
+YOUR TASK: Return ONLY the indices of people who GENUINELY hold the role "{job_title}" (or a closely related title) at "{company}" as their CURRENT primary position.
 
-CRITICAL RULES — read carefully:
-1. The "LinkedIn Headline" field shows the person's ACTUAL headline. If it says a DIFFERENT company (e.g. "Name - OtherCompany | LinkedIn"), they are NOT at "{company}". EXCLUDE them.
-2. Someone who QUOTES, SHARES, or COMMENTS about "{company}" is NOT a {job_title} of "{company}". EXCLUDE them.
-3. Someone who is "{job_title}" of a DIFFERENT company must be EXCLUDED even if they mention "{company}".
-4. Someone who is a student, intern, employee, or follower of "{company}" is NOT a {job_title}. EXCLUDE them.
-5. The role "{job_title}" must be EXPLICITLY stated as their position AT "{company}" in their headline or title — not just appearing near the company name in a snippet.
-6. When in DOUBT, EXCLUDE. Only include if you are CERTAIN.
+STRICT RULES — apply ALL of these:
+1. The person must CURRENTLY work at "{company}" in a role matching or closely related to "{job_title}".
+2. If the LinkedIn Headline says "(not available)" AND the snippet says "(not available)", you have NO evidence this person works at "{company}" as "{job_title}". You MUST EXCLUDE them.
+3. If the headline mentions a DIFFERENT company as their employer, EXCLUDE them — even if they mention "{company}" elsewhere.
+4. People who merely FOLLOW, LIKE, SHARE, or COMMENT about "{company}" are NOT employees. EXCLUDE them.
+5. Students, interns, or people who took a course at "{company}" are NOT "{job_title}". EXCLUDE them.
+6. The role "{job_title}" must be their ACTUAL JOB TITLE at "{company}", not just a word that appears near the company name.
+7. If in ANY doubt, EXCLUDE. Only include candidates you are HIGHLY CONFIDENT about.
+8. If NOBODY qualifies, return an empty array []. Do NOT force-include anyone.
 
-Return ONLY a JSON array of index numbers. If none match, return [].
-NO explanation, ONLY the JSON array."""
+Return ONLY a JSON array of integer indices. Example: [0, 3] or [].
+No explanation, no text — ONLY the JSON array."""
 
     try:
         client = _get_llm_client()
         response = client.chat.completions.create(
             model=config.NVIDIA_MODEL,
             messages=[
-                {"role": "system", "content": "You are a precise data verification assistant. Return only valid JSON arrays of integers. No explanations."},
+                {"role": "system", "content": "You are a strict data verification assistant. You return only valid JSON arrays of integers. When evidence is missing or ambiguous, you exclude the candidate. You never guess."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,
+            temperature=0.0,  # Deterministic — no creativity needed
             max_tokens=200,
         )
 
         text = (response.choices[0].message.content or "").strip()
         logger.debug("LLM verification response: %s", text)
 
-        # Parse the JSON array from the response
-        # Handle cases where LLM wraps in markdown code block
+        # Parse JSON, handle markdown code blocks
         text = text.strip("`").strip()
         if text.startswith("json"):
             text = text[4:].strip()
@@ -251,17 +284,14 @@ NO explanation, ONLY the JSON array."""
         verified_indices = json.loads(text)
 
         if not isinstance(verified_indices, list):
-            logger.warning("LLM returned non-list: %r. Keeping all candidates.", text)
-            return candidates[:max_results]
+            logger.warning("LLM returned non-list: %r. Returning empty.", text)
+            return []
 
-        # Filter to only verified candidates
         verified = []
         for idx in verified_indices:
             if isinstance(idx, int) and 0 <= idx < len(candidates):
                 verified.append(candidates[idx])
-                logger.info(
-                    "  ✔ VERIFIED [%d] %s", idx, candidates[idx]["full_name"],
-                )
+                logger.info("  ✔ VERIFIED [%d] %s", idx, candidates[idx]["full_name"])
             if len(verified) >= max_results:
                 break
 
@@ -272,8 +302,8 @@ NO explanation, ONLY the JSON array."""
         return verified
 
     except Exception as exc:
-        logger.error("LLM verification failed: %s. Returning top candidates.", exc)
-        return candidates[:max_results]
+        logger.error("LLM verification failed: %s. Returning empty to avoid false positives.", exc)
+        return []  # Fail safe — return nothing rather than garbage
 
 
 # ---------------------------------------------------------------------------
@@ -288,15 +318,15 @@ def find_targets(
     """Search for LinkedIn profiles matching *job_title* at *company*.
 
     Uses Google Search as primary source (more accurate), with DuckDuckGo
-    as fallback. Applies relevance filtering to ensure results actually
-    match the target company.
+    as fallback. Applies company-mention filtering AND LLM verification
+    to ensure high-quality results.
 
     Parameters
     ----------
     company : str
-        Target company name (e.g. ``"Coder Army"``).
+        Target company name (e.g. ``"Google"``).
     job_title : str
-        Role to search for (e.g. ``"Founder"``).
+        Role to search for (e.g. ``"Engineering Manager"``).
     max_results : int
         Maximum number of profiles to return (default 5).
 
@@ -307,10 +337,11 @@ def find_targets(
         ``full_name``, ``first_name``, ``last_name``,
         ``job_title``, ``company``, ``profile_url``.
     """
-    # -- Build multiple query patterns for better coverage --
+    # -- Build targeted search queries --
     queries = [
         f'"{job_title}" "{company}" site:linkedin.com/in',
         f'"{company}" "{job_title}" LinkedIn profile',
+        f'site:linkedin.com/in "{job_title}" at "{company}"',
     ]
 
     seen_urls: set[str] = set()
@@ -319,13 +350,13 @@ def find_targets(
     for query in queries:
         logger.info("Google query: %s", query)
 
-        # -- Try Google first (more accurate) --
+        # Try Google first
         results = _search_google(query, max_results)
         source = "Google"
 
-        # -- Fallback to DuckDuckGo if Google returned nothing --
+        # Fallback to DuckDuckGo
         if not results:
-            logger.info("Google returned 0 results, falling back to DuckDuckGo.")
+            logger.info("Google returned 0, falling back to DuckDuckGo.")
             results = _search_ddgs(query, max_results)
             source = "DuckDuckGo"
 
@@ -338,19 +369,18 @@ def find_targets(
             seen_urls.add(norm_url)
             all_results.append(r)
 
-        # Brief pause between queries to be polite
         time.sleep(1)
 
-    # -- Now try to enrich results missing title/snippet via DuckDuckGo --
-    # Google's `googlesearch-python` only returns URLs, no titles/snippets.
-    # Do a single DDGS fetch to get titles for name extraction.
+        # Stop early if we already have enough raw candidates
+        if len(all_results) >= max_results * 4:
+            break
 
+    # -- Enrich results missing title/snippet via DuckDuckGo --
     if all_results and not all_results[0].get("title"):
         logger.info("Enriching results via DuckDuckGo for name extraction...")
         enrich_query = f'"{job_title}" "{company}" site:linkedin.com/in'
         ddgs_results = _search_ddgs(enrich_query, max_results * 2)
 
-        # Build URL -> (title, snippet) map
         ddgs_map: dict[str, dict] = {}
         for r in ddgs_results:
             norm = _normalize_linkedin_url(r["url"])
@@ -372,32 +402,27 @@ def find_targets(
         raw_title = r.get("title", "")
         snippet = r.get("snippet", "")
 
-        # Try to extract name from title
+        # Extract name from title or URL slug
         full_name = _clean_name(raw_title) if raw_title else ""
-
-        # If no title, try extracting from URL slug
         if not full_name:
-            # e.g. https://linkedin.com/in/rohit-negi -> "Rohit Negi"
-            match = re.search(r"linkedin\.com/in/([^/?#]+)", url)
-            if match:
-                slug = match.group(1)
-                # Remove trailing numbers/hashes from slug
-                slug = re.sub(r"-[a-f0-9]{6,}$", "", slug)
-                slug = re.sub(r"-\d+$", "", slug)
-                parts = slug.split("-")
-                full_name = " ".join(p.capitalize() for p in parts if p)
+            full_name = _name_from_url_slug(url)
 
         if not full_name:
             logger.debug("Could not extract name from: %r", raw_title or url)
             continue
 
-        # -- Relevance check: company must appear in title or snippet --
+        # Skip names that look like job titles (e.g. "Senior Manager")
+        if _looks_like_title(full_name):
+            logger.debug("  SKIP '%s' — looks like a job title, not a name.", full_name)
+            continue
+
+        # Relevance check — company must appear in combined text
         combined_text = f"{raw_title} {snippet}"
-        if not _company_mentioned_in_snippet(combined_text, company):
-            logger.debug(
-                "  SKIP %s — '%s' not mentioned in snippet.",
-                full_name, company,
-            )
+        has_company_mention = _company_mentioned_in_snippet(combined_text, company)
+
+        # If we have text to check AND company isn't mentioned, skip
+        if combined_text.strip() and not has_company_mention:
+            logger.debug("  SKIP %s — '%s' not mentioned in text.", full_name, company)
             continue
 
         first_name, last_name = _split_name(full_name)
@@ -413,10 +438,10 @@ def find_targets(
             "_snippet": snippet,
         })
 
-    # -- LLM verification: filter out false positives --
+    # -- LLM verification (MANDATORY accuracy gate) --
     if candidates:
         logger.info(
-            "Verifying %d candidate(s) via LLM (is this person actually '%s' at '%s'?)...",
+            "Verifying %d candidate(s) via LLM — is this person actually '%s' at '%s'?",
             len(candidates), job_title, company,
         )
         targets = _llm_verify_candidates(candidates, job_title, company, max_results)
@@ -430,9 +455,7 @@ def find_targets(
 
     logger.info(
         "find_targets complete: %d verified profile(s) for '%s' at '%s'.",
-        len(targets),
-        job_title,
-        company,
+        len(targets), job_title, company,
     )
     return targets
 

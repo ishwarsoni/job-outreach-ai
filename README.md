@@ -58,6 +58,14 @@ A fully automated **cold-outreach pipeline** designed for job seekers. Give it a
 
 ---
 
+## 🎨 Web Dashboard
+
+The project now includes a beautiful, modern web dashboard for running the pipeline interactively:
+
+![Job Search Agent Dashboard](frontend_screenshot.png)
+
+---
+
 ## ⚡ Quick Start
 
 ### Prerequisites
@@ -116,6 +124,21 @@ NVIDIA_API_KEY=nvapi-your_key_here
 
 ### 3. Run the Pipeline
 
+#### Option A: Web UI (Recommended)
+
+```bash
+python server.py
+# Open http://localhost:8000 in your browser
+```
+
+The web interface provides a modern dark-themed dashboard with:
+- **Real-time pipeline progress** — watch each step complete with live status updates
+- **Results table** — browse discovered profiles, validated emails, and LinkedIn links
+- **Email preview** — click to view AI-drafted emails with copy-to-clipboard support
+- **CSV download** — export results directly from the browser
+
+#### Option B: CLI
+
 ```bash
 # Interactive mode — you'll be prompted for company, title, and domain
 python main.py
@@ -147,6 +170,7 @@ Results are saved to `outreach_results.csv` with the following columns:
 | `domain` | Corporate email domain |
 | `profile_url` | LinkedIn profile URL |
 | `validated_email` | Validated (or best-guess) email address |
+| `email_body` | AI-drafted personalized cold outreach email |
 
 ---
 
@@ -234,11 +258,17 @@ Job Search Agent/
 ├── README.md
 │
 ├── main.py               # CLI entry point & pipeline orchestrator
+├── server.py             # FastAPI web server with SSE streaming
 ├── config.py             # Configuration & environment loader
 ├── target_finder.py      # LinkedIn profile discovery
 ├── email_validator.py    # Email permutation & SMTP validation
 ├── email_drafter.py      # AI-powered email drafting
 ├── data_export.py        # CSV export
+│
+├── frontend/
+│   ├── index.html        # Web UI — main page
+│   ├── app.js            # Client-side logic (SSE, rendering)
+│   └── styles.css        # Dark theme with glassmorphism
 │
 └── outreach_results.csv  # Output (generated after first run)
 ```
@@ -254,6 +284,8 @@ Job Search Agent/
 | `dnspython` | DNS MX record resolution |
 | `openai` | NVIDIA NIM API client (OpenAI-compatible) |
 | `python-dotenv` | Environment variable loading from `.env` |
+| `fastapi` | Web server framework for the browser-based UI |
+| `uvicorn` | ASGI server to run the FastAPI application |
 
 ---
 
