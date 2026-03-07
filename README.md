@@ -131,10 +131,10 @@ python server.py
 # Open http://localhost:8000 in your browser
 ```
 
-The web interface provides a modern dark-themed dashboard with:
+The web interface provides a modern, dark-themed dashboard with a sleek violet/purple aesthetic:
 - **Real-time pipeline progress** — watch each step complete with live status updates
-- **Results table** — browse discovered profiles, validated emails, and LinkedIn links
-- **Email preview** — click to view AI-drafted emails with copy-to-clipboard support
+- **Results cards** — browse discovered profiles, validated emails, and LinkedIn links in a responsive grid layout
+- **Email preview** — click to view AI-drafted emails in a slide-over panel with copy-to-clipboard support
 - **CSV download** — export results directly from the browser
 
 #### Option B: CLI
