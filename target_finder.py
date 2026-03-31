@@ -79,11 +79,12 @@ def _clean_name(raw_title: str) -> str:
         2. Split on `` - `` and take the first segment (the name).
         3. Strip whitespace and any residual non-alpha junk.
     """
-    # Step 1 -- drop everything after the last pipe
-    name_part = raw_title.split("|")[0].strip()
+    # Step 1 -- drop everything after the first pipe
+    name_part = re.split(r"\s*\|\s*", raw_title, maxsplit=1)[0].strip()
 
-    # Step 2 -- the name is always the first dash-delimited segment
-    name_part = name_part.split(" - ")[0].strip()
+    # Step 2 -- name is usually the first dash-delimited segment
+    # Handles both "Name - Role - Company" and "Name-Role" variants.
+    name_part = re.split(r"\s*-\s*", name_part, maxsplit=1)[0].strip()
 
     # Step 3 -- remove stray "LinkedIn" if it somehow survived, and trim
     name_part = re.sub(r"\bLinkedIn\b", "", name_part, flags=re.IGNORECASE).strip()
@@ -163,6 +164,64 @@ def _company_mentioned_in_snippet(snippet: str, company: str) -> bool:
         return True
 
     return False
+
+
+def _matches_role(text: str, job_title: str) -> bool:
+    """Heuristic role match for high-precision filtering."""
+    hay = (text or "").lower()
+    jt = (job_title or "").lower().strip()
+    if not hay or not jt:
+        return False
+
+    # Common strict aliases for high-signal roles.
+    if "founder" in jt:
+        return any(x in hay for x in (" founder", "co-founder", "cofounder", "founding "))
+
+    if "recruiter" in jt:
+        return any(
+            x in hay for x in (
+                "recruiter", "talent acquisition", "talent partner",
+                "sourcer", "technical recruiter", "hiring",
+            )
+        )
+
+    if "engineering manager" in jt:
+        return (
+            "engineering manager" in hay
+            or ("manager" in hay and "engineering" in hay)
+        )
+
+    # Generic fallback: require most significant title words.
+    stop = {"and", "of", "the", "at", "for", "in", "to", "&"}
+    tokens = [t for t in re.findall(r"[a-z0-9]+", jt) if len(t) >= 3 and t not in stop]
+    if not tokens:
+        return False
+    matched = sum(1 for t in tokens if t in hay)
+    return matched >= max(1, int(len(tokens) * 0.6))
+
+
+def _deterministic_verify_candidates(
+    candidates: list[dict],
+    job_title: str,
+    company: str,
+    max_results: int,
+) -> list[dict]:
+    """Strict non-LLM verifier used as fallback for reliability."""
+    verified: list[dict] = []
+    for c in candidates:
+        title = c.get("_raw_title", "")
+        snippet = c.get("_snippet", "")
+        combined = f"{title} {snippet}".strip()
+
+        if not _company_mentioned_in_snippet(combined, company):
+            continue
+        if not _matches_role(combined, job_title):
+            continue
+
+        verified.append(c)
+        if len(verified) >= max_results:
+            break
+    return verified
 
 
 # ---------------------------------------------------------------------------
@@ -251,8 +310,8 @@ def _llm_verify_candidates(
     hold the specified role at the target company.
     """
     if not config.NVIDIA_API_KEY:
-        logger.warning("NVIDIA_API_KEY not set — skipping LLM verification.")
-        return candidates[:max_results]
+        logger.warning("NVIDIA_API_KEY not set — using strict deterministic verification.")
+        return _deterministic_verify_candidates(candidates, job_title, company, max_results)
 
     # Build candidate descriptions for the prompt
     candidate_lines = []
@@ -333,8 +392,8 @@ No explanation, no text — ONLY the JSON array."""
         return verified
 
     except Exception as exc:
-        logger.error("LLM verification failed: %s. Returning empty to avoid false positives.", exc)
-        return []  # Fail safe — return nothing rather than garbage
+        logger.error("LLM verification failed: %s. Falling back to deterministic verification.", exc)
+        return _deterministic_verify_candidates(candidates, job_title, company, max_results)
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +519,12 @@ def find_targets(
         # If we have text to check AND company isn't mentioned, skip
         if combined_text.strip() and not has_company_mention:
             logger.debug("  SKIP %s — '%s' not mentioned in text.", full_name, company)
+            continue
+
+        # High-precision pre-filter so obvious title mismatches are removed
+        # before the LLM gate.
+        if combined_text.strip() and not _matches_role(combined_text, job_title):
+            logger.debug("  SKIP %s — role/title does not match '%s'.", full_name, job_title)
             continue
 
         first_name, last_name = _split_name(full_name)
