@@ -191,43 +191,50 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
                 "status": "running",
                 "message": "SMTP validation disabled in this environment for faster runs.",
             })
+        validation_semaphore = asyncio.Semaphore(config.VALIDATION_CONCURRENCY)
 
-        validated_count = 0
-        for i, p in enumerate(profiles):
-            first, last, p_domain = p["first_name"], p["last_name"], p["domain"]
+        async def _validate_one(profile_index: int, profile: dict) -> tuple[int, dict]:
+            first = profile["first_name"]
+            last = profile["last_name"]
+            p_domain = profile["domain"]
 
+            # Mark and skip obviously bad rows fast.
             if _looks_like_title(first) or _looks_like_title(last):
-                continue
+                profile["validated_email"] = ""
+                profile["email_confidence"] = "skipped"
+                return profile_index, profile
 
-            clean_first, clean_last = _clean_for_email(first), _clean_for_email(last)
+            clean_first = _clean_for_email(first)
+            clean_last = _clean_for_email(last)
 
-            # Free Discovery
-            try:
-                discovered = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda f=first, l=last, d=p_domain, c=p.get("company", ""): discover_email(f, l, d, c),
-                    ),
-                    timeout=config.DISCOVERY_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                _record_error(
-                    job_id,
-                    "email_discovery",
-                    "Timed out",
-                    f"No result within {config.DISCOVERY_TIMEOUT_SECONDS}s for {p['full_name']}",
-                )
-                discovered = None
-            except Exception as e:
-                _record_error(job_id, "email_discovery", "API or search timeout", str(e))
-                discovered = None
+            async with validation_semaphore:
+                # 1) Free discovery methods.
+                try:
+                    discovered = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda f=first, l=last, d=p_domain, c=profile.get("company", ""): discover_email(f, l, d, c),
+                        ),
+                        timeout=config.DISCOVERY_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    _record_error(
+                        job_id,
+                        "email_discovery",
+                        "Timed out",
+                        f"No result within {config.DISCOVERY_TIMEOUT_SECONDS}s for {profile['full_name']}",
+                    )
+                    discovered = None
+                except Exception as exc:
+                    _record_error(job_id, "email_discovery", "API or search timeout", str(exc))
+                    discovered = None
 
-            if discovered:
-                p["validated_email"] = discovered
-                p["email_confidence"] = "found"
-                validated_count += 1
-            else:
-                # SMTP validation can be expensive/blocked on cloud networks.
+                if discovered:
+                    profile["validated_email"] = discovered
+                    profile["email_confidence"] = "found"
+                    return profile_index, profile
+
+                # 2) SMTP validation fallback (optional in cloud).
                 if config.ENABLE_SMTP_VALIDATION:
                     try:
                         candidates = await asyncio.wait_for(
@@ -239,34 +246,54 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
                         )
                         winner = best_email(candidates)
                         if winner:
-                            p["validated_email"] = winner
+                            profile["validated_email"] = winner
                             best_result = next((c for c in candidates if c.address == winner), None)
-                            p["email_confidence"] = "verified" if best_result and best_result.result == ValidationResult.VALID else "likely"
-                            validated_count += 1
+                            profile["email_confidence"] = "verified" if best_result and best_result.result == ValidationResult.VALID else "likely"
                         else:
-                            p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
-                            p["email_confidence"] = "guessed"
+                            profile["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                            profile["email_confidence"] = "guessed"
                     except asyncio.TimeoutError:
                         _record_error(
                             job_id,
                             "smtp_validation",
                             "Timed out",
-                            f"No result within {config.SMTP_VALIDATION_TIMEOUT_SECONDS}s for {p['full_name']}",
+                            f"No result within {config.SMTP_VALIDATION_TIMEOUT_SECONDS}s for {profile['full_name']}",
                         )
-                        p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
-                        p["email_confidence"] = "guessed"
-                    except Exception as e:
-                        _record_error(job_id, "smtp_validation", "Timeout or network restriction", str(e))
-                        p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
-                        p["email_confidence"] = "guessed"
+                        profile["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                        profile["email_confidence"] = "guessed"
+                    except Exception as exc:
+                        _record_error(job_id, "smtp_validation", "Timeout or network restriction", str(exc))
+                        profile["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                        profile["email_confidence"] = "guessed"
                 else:
-                    p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
-                    p["email_confidence"] = "guessed"
+                    profile["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                    profile["email_confidence"] = "guessed"
+
+            return profile_index, profile
+
+        tasks = [
+            asyncio.create_task(_validate_one(i, p))
+            for i, p in enumerate(profiles)
+        ]
+
+        completed = 0
+        for done in asyncio.as_completed(tasks):
+            profile_index, updated_profile = await done
+            profiles[profile_index] = updated_profile
+            completed += 1
 
             _record_event(job_id, "validation_progress", {
-                "index": i, "total": len(profiles), "name": p["full_name"],
-                "email": p["validated_email"], "confidence": p.get("email_confidence", "")
+                "index": completed - 1,
+                "total": len(profiles),
+                "name": updated_profile.get("full_name", ""),
+                "email": updated_profile.get("validated_email", ""),
+                "confidence": updated_profile.get("email_confidence", ""),
             })
+
+        _TRUSTWORTHY = {"found", "verified", "likely"}
+        validated_count = sum(
+            1 for p in profiles if p.get("email_confidence") in _TRUSTWORTHY
+        )
 
         _record_event(job_id, "step", {
             "step": 2, "title": "Email Discovery", "status": "done",
@@ -274,7 +301,6 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
         })
 
         # Filter trustworthy emails
-        _TRUSTWORTHY = {"found", "verified", "likely"}
         accurate = [p for p in profiles if p.get("email_confidence") in _TRUSTWORTHY]
         
         for p in profiles:

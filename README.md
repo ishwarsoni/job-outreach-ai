@@ -160,6 +160,7 @@ To avoid long stalls in hosted deployments, Zora now supports worker timeouts an
 
 * `DISCOVERY_TIMEOUT_SECONDS` (default `12`)
 * `SMTP_VALIDATION_TIMEOUT_SECONDS` (default `15`)
+* `VALIDATION_CONCURRENCY` (default `3`)
 * `ENABLE_SMTP_VALIDATION` (default `false` on Render, `true` locally)
 
 Recommended for Render:
@@ -167,6 +168,7 @@ Recommended for Render:
 * `ENABLE_SMTP_VALIDATION=false`
 * `DISCOVERY_TIMEOUT_SECONDS=8` to `12`
 * `SMTP_VALIDATION_TIMEOUT_SECONDS=10` to `15`
+* `VALIDATION_CONCURRENCY=3` to `5`
 
 This keeps progress moving and prevents the UI from appearing stuck on a single profile.
 

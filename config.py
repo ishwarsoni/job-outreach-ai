@@ -30,6 +30,7 @@ def _as_bool(name: str, default: bool) -> bool:
 # Timeouts for background worker stages (web API mode)
 DISCOVERY_TIMEOUT_SECONDS: int = int(os.getenv("DISCOVERY_TIMEOUT_SECONDS", "12"))
 SMTP_VALIDATION_TIMEOUT_SECONDS: int = int(os.getenv("SMTP_VALIDATION_TIMEOUT_SECONDS", "15"))
+VALIDATION_CONCURRENCY: int = max(1, int(os.getenv("VALIDATION_CONCURRENCY", "3")))
 
 # SMTP is often blocked on cloud hosts (port 25). Disable by default on Render
 # to keep runs responsive. Local runs keep SMTP enabled by default.
