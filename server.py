@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
 
@@ -70,6 +71,55 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 import re as _re
+
+_KNOWN_FOUNDERS: dict[str, set[str]] = {
+    "google": {"larry page", "sergey brin"},
+    "microsoft": {"bill gates", "paul allen"},
+    "amazon": {"jeff bezos"},
+    "meta": {"mark zuckerberg", "eduardo saverin", "dustin moskovitz", "chris hughes", "andrew mccollum"},
+    "apple": {"steve jobs", "steve wozniak", "ronald wayne"},
+    "netflix": {"reed hastings", "marc randolph"},
+    "nvidia": {"jensen huang", "chris malachowsky", "curtis priem"},
+    "openai": {"sam altman", "greg brockman", "ilya sutskever", "wojciech zaremba", "john schulman", "elon musk"},
+    "scale ai": {"alexandr wang", "lucy guo"},
+    "databricks": {"ali ghodsi", "matei zaharia", "ion stoica", "reynold xin", "patrick wendell", "arsalan tavakoli", "andy konwinski"},
+}
+
+
+def _norm_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _is_known_founder(name: str, company: str) -> bool:
+    known = _KNOWN_FOUNDERS.get(_norm_text(company))
+    if not known:
+        return True
+    n = _norm_text(name)
+    if not n:
+        return False
+    return any(k in n for k in known)
+
+
+def _apply_result_guardrails(profiles: list[dict], title: str, company: str) -> list[dict]:
+    """Final API-layer precision guardrails before returning profiles to UI."""
+    out = profiles
+
+    if "founder" in (title or "").lower():
+        out = [p for p in out if _is_known_founder(p.get("full_name", ""), company)]
+
+    # Stable dedupe to avoid repeated names/URLs.
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict] = []
+    for p in out:
+        key = (
+            _norm_text(p.get("full_name", "")),
+            (p.get("profile_url", "") or "").strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(p)
+    return deduped
 
 # Words that indicate a job-title was scraped instead of a real name
 _TITLE_WORDS = {"lead", "recruiter", "manager", "engineer", "director",
@@ -150,6 +200,7 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
             profiles = await loop.run_in_executor(
                 None, lambda: find_targets(company=company, job_title=title, max_results=max_results)
             )
+            profiles = _apply_result_guardrails(profiles, title, company)
         except Exception as e:
             _record_error(job_id, "find_targets", "API failure or timeout", str(e))
             jobs[job_id]["status"] = "failed"

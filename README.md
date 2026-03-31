@@ -35,6 +35,7 @@ Zora is intentionally tuned for precision over recall.
 
 - Profiles are rejected when evidence is weak or ambiguous.
 - Founder searches include extra strict checks to reduce false positives.
+- API-layer founder guardrail prevents non-founder leakage for known major companies.
 - `MIN_TARGET_EVIDENCE_SCORE` controls strictness (`3` default, `4` stricter).
 
 Important: no open-web system can guarantee universal 99% accuracy because search snippets, indexing, and platform rate limits are non-deterministic. Zora addresses this by failing closed on low-confidence candidates.
