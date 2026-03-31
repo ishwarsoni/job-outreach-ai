@@ -156,8 +156,62 @@ def _name_from_url_slug(url: str) -> str:
     # Remove trailing hash IDs and numbers
     slug = re.sub(r"-[a-f0-9]{6,}$", "", slug)
     slug = re.sub(r"-\d+$", "", slug)
-    parts = slug.split("-")
+
+    raw_parts = [p for p in slug.split("-") if p]
+
+    # Stop when role/company/meta tokens start appearing in slug.
+    # Example bad slug: "john-doe-founder-microsoft" -> keep "john doe".
+    stop_tokens = {
+        "founder", "cofounder", "co", "recruiter", "manager", "engineer",
+        "director", "lead", "ceo", "cto", "vp", "president", "head",
+        "microsoft", "google", "amazon", "meta", "apple", "netflix",
+        "nvidia", "openai", "scale", "databricks", "at", "of",
+    }
+
+    parts: list[str] = []
+    for p in raw_parts:
+        p_low = p.lower()
+        if p_low in stop_tokens:
+            break
+        # Drop pure numeric/hash fragments
+        if re.fullmatch(r"[0-9a-f]{6,}", p_low):
+            continue
+        if re.fullmatch(r"\d+", p_low):
+            continue
+        parts.append(p)
+
     return " ".join(p.capitalize() for p in parts if p)
+
+
+def _is_valid_person_name(full_name: str) -> bool:
+    """Return True only for likely real person names."""
+    if not full_name:
+        return False
+
+    n = full_name.strip()
+    if len(n) < 3 or len(n) > 60:
+        return False
+
+    # Must contain letters and only reasonable punctuation.
+    if not re.fullmatch(r"[A-Za-z .'-]+", n):
+        return False
+
+    # At least first+last in most cases for precision mode.
+    parts = [p for p in n.split() if p]
+    if len(parts) < 2:
+        return False
+
+    # Reject if any role words leak into name text.
+    lower_words = {w.lower().strip(".'") for w in parts}
+    if lower_words & _TITLE_WORDS:
+        return False
+
+    # Reject obvious broken extraction artifacts.
+    bad_fragments = {"undefined", "linkedin", "profile", "founder", "recruiter", "microsoft", "google"}
+    if lower_words & bad_fragments:
+        return False
+
+    return True
 
 
 def _looks_like_title(name: str) -> bool:
@@ -625,6 +679,10 @@ def find_targets(
 
         if not full_name:
             logger.debug("Could not extract name from: %r", raw_title or url)
+            continue
+
+        if not _is_valid_person_name(full_name):
+            logger.debug("  SKIP '%s' — invalid or malformed person name.", full_name)
             continue
 
         # Skip names that look like job titles (e.g. "Senior Manager")
