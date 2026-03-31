@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-main.py — Orchestrator for the AI-Powered Outreach Agent (NVIDIA Devstral).
+main.py — CLI orchestrator for Zora.
 
 Pipeline:
   1. Identify target hiring managers via web search.
@@ -69,7 +69,7 @@ def clean_for_email(text: str) -> str:
 # ── CLI argument parser ─────────────────────────────────────────────────────
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="AI-Powered Outreach Agent — find, validate, and email hiring managers.",
+        description="Zora — discover, validate, and email hiring managers.",
     )
     parser.add_argument(
         "-c", "--company",

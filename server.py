@@ -48,8 +48,8 @@ for _noisy in ("primp", "rustls", "h2", "hyper_util", "httpx", "httpcore",
 
 # ── FastAPI app ──────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Job Search Agent",
-    description="AI-Powered Outreach Agent API",
+    title="Zora",
+    description="Signal-based outreach system API",
     version="1.0.0",
 )
 

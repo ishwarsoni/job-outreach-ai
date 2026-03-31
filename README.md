@@ -1,4 +1,4 @@
-# Job Outreach Pipeline
+# Zora
 
 A data-driven outreach pipeline that prioritizes accuracy over volume by discovering and validating real emails from public sources.
 
@@ -28,6 +28,7 @@ To prioritize data accuracy over high-volume spam, this system implements a mult
 ## Demo / Output Preview
 
 **Input:** Company: `Scale AI`, Role: `Engineering Manager`
+*(Example output, anonymized)*
 
 ```text
 Name: Alex Chen
@@ -50,9 +51,13 @@ Thanks,
 Ishwar
 ```
 
+## Sample Output File
+
+A sample CSV export demonstrating the structured, high-confidence data pipeline output is included in the repository as `outreach_results_sample.csv`.
+
 ## Failure Cases & Limitations
 
-Real-world systems fail. Here is where this pipeline reaches its limits:
+Real-world systems fail. Here is where Zora reaches its limits:
 
 * **No Public Digital Footprint:** If a hiring manager has absolutely no public email presence (no GitHub commits, conference talks, or company team pages), the primary discovery module will fail.
 * **Network Restrictions (Port 25):** The fallback SMTP validation requires outbound port 25. Most residential ISPs block this, meaning local runs will often fail the SMTP step and rely entirely on the web scraping module.
@@ -94,6 +99,19 @@ python server.py
 ```bash
 python main.py -c "Scale AI" -t "Engineering Manager" -d "scale.com"
 ```
+
+## Deployment
+
+Zora can be deployed effortlessly using Render.
+
+Steps:
+
+1. Connect your GitHub repository to Render as a Web Service.
+2. Set the build command: `pip install -r requirements.txt`
+3. Set the start command: `bash start.sh`
+4. Add environment variable: `NVIDIA_API_KEY`
+
+*(Note: SMTP validation probes require outbound port 25, which may be blocked or restricted depending on your host. If blocked, Zora will automatically rely on the public web metadata discovery).*
 
 ## Tech Stack
 
