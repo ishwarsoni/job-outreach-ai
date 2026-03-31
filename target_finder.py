@@ -42,6 +42,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# If Google starts returning 429/CAPTCHA, pause Google lookups temporarily
+# and route all searches through DuckDuckGo for the cooldown window.
+_GOOGLE_BLOCKED_UNTIL: float = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -166,14 +171,40 @@ def _company_mentioned_in_snippet(snippet: str, company: str) -> bool:
 
 def _search_google(query: str, max_results: int) -> list[dict]:
     """Search Google and return LinkedIn profile URLs."""
+    global _GOOGLE_BLOCKED_UNTIL
+
     results = []
     try:
         for url in google_search(query, num_results=max_results * 3, sleep_interval=2, lang="en"):
             if _is_linkedin_profile_url(url):
                 results.append({"url": url, "title": "", "snippet": ""})
     except Exception as exc:
-        logger.warning("Google search error: %s. Got %d results.", exc, len(results))
+        error_text = str(exc).lower()
+        if "429" in error_text or "too many requests" in error_text or "sorry/index" in error_text:
+            _GOOGLE_BLOCKED_UNTIL = time.time() + max(60, config.GOOGLE_COOLDOWN_SECONDS)
+            cooldown = int(_GOOGLE_BLOCKED_UNTIL - time.time())
+            logger.info(
+                "Google rate-limited (429/CAPTCHA). Skipping Google for %ds and using DuckDuckGo fallback.",
+                cooldown,
+            )
+        else:
+            logger.warning("Google search error: %s. Got %d results.", exc, len(results))
     return results
+
+
+def _should_use_google() -> bool:
+    """Return whether Google should be queried for this request."""
+    backend = config.SEARCH_BACKEND
+    if backend == "ddg":
+        return False
+    if backend == "google":
+        return True
+    if backend != "auto":
+        logger.warning("Unknown SEARCH_BACKEND=%r, falling back to auto mode.", backend)
+
+    if time.time() < _GOOGLE_BLOCKED_UNTIL:
+        return False
+    return True
 
 
 def _search_ddgs(query: str, max_results: int) -> list[dict]:
@@ -348,15 +379,21 @@ def find_targets(
     all_results: list[dict] = []
 
     for query in queries:
-        logger.info("Google query: %s", query)
+        results = []
+        source = "DuckDuckGo"
 
-        # Try Google first
-        results = _search_google(query, max_results)
-        source = "Google"
+        # Try Google first unless disabled by config/cooldown.
+        if _should_use_google():
+            logger.info("Google query: %s", query)
+            results = _search_google(query, max_results)
+            source = "Google"
+        else:
+            logger.info("DuckDuckGo query (Google disabled/cooling down): %s", query)
 
         # Fallback to DuckDuckGo
         if not results:
-            logger.info("Google returned 0, falling back to DuckDuckGo.")
+            if source == "Google":
+                logger.info("Google returned 0, falling back to DuckDuckGo.")
             results = _search_ddgs(query, max_results)
             source = "DuckDuckGo"
 

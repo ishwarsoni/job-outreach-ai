@@ -24,6 +24,14 @@ SEARCH_ENGINE_URL: str = "https://html.duckduckgo.com/html/"
 REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "15"))
 MAX_SEARCH_RESULTS: int = int(os.getenv("MAX_SEARCH_RESULTS", "10"))
 
+# Search backend control:
+#   auto   -> use Google first, then DuckDuckGo fallback
+#   google -> force Google only
+#   ddg    -> force DuckDuckGo only
+_default_search_backend = "ddg" if os.getenv("RENDER") else "auto"
+SEARCH_BACKEND: str = os.getenv("SEARCH_BACKEND", _default_search_backend).lower()
+GOOGLE_COOLDOWN_SECONDS: int = int(os.getenv("GOOGLE_COOLDOWN_SECONDS", "1800"))
+
 # ── User-Agent rotation pool ────────────────────────────────────────────────
 USER_AGENTS: list[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

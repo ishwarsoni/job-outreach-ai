@@ -64,6 +64,18 @@ Real-world systems fail. Here is where Zora reaches its limits:
 * **Catch-All Domains:** Many large tech companies configure their mail servers to accept all incoming mail (`250 OK`). For these domains, SMTP validation is inconclusive, and the email is flagged as `Likely` rather than `Verified`.
 * **Search Engine Rate Limits:** The profile scraping relies on Google and DuckDuckGo search results. Aggressive usage will result in HTTP 429s or CAPTCHAs, reducing the yield.
 
+### Google 429 on Render / Cloud Hosts
+
+If logs show Google responses like `429 Too Many Requests` or `/sorry/index`, your host IP is being rate-limited (common on shared cloud infrastructure).
+
+Zora now supports a configurable search backend:
+
+* `SEARCH_BACKEND=ddg` → uses DuckDuckGo only (recommended on Render)
+* `SEARCH_BACKEND=auto` → Google first, DuckDuckGo fallback
+* `SEARCH_BACKEND=google` → force Google only
+
+It also applies automatic cooldown after a Google 429 via `GOOGLE_COOLDOWN_SECONDS` so repeated requests do not keep hitting the same block window.
+
 **Metrics:** 
 * Tested across ~20 tech companies.
 * Yields valid/found emails for ~60% of identified profiles.
