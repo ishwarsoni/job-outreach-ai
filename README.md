@@ -137,6 +137,16 @@ This repo also includes:
 
 *(Note: SMTP validation probes require outbound port 25, which may be blocked or restricted depending on your host. If blocked, Zora will automatically rely on the public web metadata discovery).*
 
+### Vercel Frontend + Render Backend
+
+If the frontend is hosted on Vercel and the API is hosted on Render, the frontend must forward `/api/*` requests to the backend.
+
+This repo includes `vercel.json` with a rewrite:
+
+* `/api/(.*)` → `https://zora-backend-0jg5.onrender.com/api/$1`
+
+After pulling latest code, redeploy the Vercel project so `/api/search`, `/api/status/:job_id`, and `/api/download` resolve correctly.
+
 ## Tech Stack
 
 * **Core:** Python, FastAPI, Server-Sent Events (SSE)
