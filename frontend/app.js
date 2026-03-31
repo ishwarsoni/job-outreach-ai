@@ -52,6 +52,14 @@ const dom = {
 let currentProfiles = [];
 let activeEventSource = null;
 
+// Production API base. This can be overridden at runtime by setting
+// window.ZORA_API_BASE_URL before app.js loads.
+const API_BASE_URL = (window.ZORA_API_BASE_URL || 'https://zora-backend-0jg5.onrender.com').replace(/\/$/, '');
+
+function apiUrl(path) {
+    return `${API_BASE_URL}${path}`;
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Toast Notifications
@@ -280,7 +288,7 @@ async function handleSearch(event) {
     currentProfiles = [];
 
     try {
-        const response = await fetch('/api/search', {
+        const response = await fetch(apiUrl('/api/search'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ company, title, domain, max_results: maxResults, dry_run: dryRun }),
@@ -306,7 +314,7 @@ function pollJobStatus(jobId) {
 
     activePollInterval = setInterval(async () => {
         try {
-            const res = await fetch(`/api/status/${jobId}`);
+            const res = await fetch(apiUrl(`/api/status/${jobId}`));
             if (!res.ok) return;
             const job = await res.json();
 
@@ -394,7 +402,7 @@ function setSearchLoading(loading) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function downloadCSV() {
-    window.open('/api/download', '_blank');
+    window.open(apiUrl('/api/download'), '_blank');
 }
 
 

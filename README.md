@@ -147,6 +147,11 @@ This repo includes `vercel.json` with a rewrite:
 
 After pulling latest code, redeploy the Vercel project so `/api/search`, `/api/status/:job_id`, and `/api/download` resolve correctly.
 
+If your Vercel project still does not apply rewrites (for example, different Root Directory settings), the frontend now also uses a direct backend base URL fallback in `frontend/app.js`:
+
+* default: `https://zora-backend-0jg5.onrender.com`
+* optional runtime override: `window.ZORA_API_BASE_URL`
+
 ## Tech Stack
 
 * **Core:** Python, FastAPI, Server-Sent Events (SSE)
