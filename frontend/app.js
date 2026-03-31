@@ -247,13 +247,15 @@ async function copyEmailToClipboard(index, btnEl) {
    Search Pipeline (SSE)
    ═══════════════════════════════════════════════════════════════════════════ */
 
+let activePollInterval = null;
+
 async function handleSearch(event) {
     event.preventDefault();
 
     const company = dom.inputCompany.value.trim();
     const title = dom.inputTitle.value.trim();
     const domain = dom.inputDomain.value.trim();
-    const maxResults = parseInt(dom.inputMaxResults.value, 10) || 10;
+    const maxResults = parseInt(dom.inputMaxResults.value, 10) || 5;
     const dryRun = dom.inputDryRun.checked;
 
     if (!company || !title) {
@@ -261,9 +263,9 @@ async function handleSearch(event) {
         return;
     }
 
-    if (activeEventSource) {
-        activeEventSource.close();
-        activeEventSource = null;
+    if (activePollInterval) {
+        clearInterval(activePollInterval);
+        activePollInterval = null;
     }
 
     // Reset UI
@@ -285,42 +287,56 @@ async function handleSearch(event) {
         });
 
         if (!response.ok) {
-            const err = await response.json().catch(() => ({ error: 'Unknown error' }));
+            const err = await response.json().catch(() => ({ error: 'Failed to start job' }));
             throw new Error(err.error || `HTTP ${response.status}`);
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-
-            const messages = buffer.split('\n\n');
-            buffer = messages.pop();
-
-            for (const msg of messages) {
-                if (!msg.trim()) continue;
-                const eventMatch = msg.match(/^event:\s*(.+)/m);
-                const dataMatch = msg.match(/^data:\s*(.+)/m);
-                if (!eventMatch || !dataMatch) continue;
-
-                const eventType = eventMatch[1].trim();
-                let eventData;
-                try { eventData = JSON.parse(dataMatch[1]); } catch { continue; }
-                handleSSEEvent(eventType, eventData);
-            }
-        }
+        const data = await response.json();
+        pollJobStatus(data.job_id);
 
     } catch (error) {
         showToast(`Error: ${error.message}`);
         console.error('Pipeline error:', error);
-    } finally {
         setSearchLoading(false);
     }
+}
+
+function pollJobStatus(jobId) {
+    let lastEventIndex = 0;
+
+    activePollInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/status/${jobId}`);
+            if (!res.ok) return;
+            const job = await res.json();
+
+            // Replay new events natively reusing existing rendering logic
+            if (job.progress) {
+                for (let i = lastEventIndex; i < job.progress.length; i++) {
+                    const evt = job.progress[i];
+                    handleSSEEvent(evt.event, evt.data);
+                }
+                lastEventIndex = job.progress.length;
+            }
+
+            if (job.status === 'completed') {
+                clearInterval(activePollInterval);
+                setSearchLoading(false);
+            } else if (job.status === 'failed') {
+                clearInterval(activePollInterval);
+                setSearchLoading(false);
+                
+                // Show rich error details if available
+                const errDetail = job.errors && job.errors.length > 0 
+                    ? `${job.errors[0].stage}: ${job.errors[0].reason}` 
+                    : "Unknown pipeline failure";
+                showToast(`Job failed — ${errDetail}`);
+                console.error("Job Failures:", job.errors);
+            }
+        } catch (e) {
+            console.error("Polling error:", e);
+        }
+    }, 2000);
 }
 
 function handleSSEEvent(type, data) {
