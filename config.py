@@ -19,6 +19,25 @@ HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")  # Optional — free tier:
 SMTP_TIMEOUT: int = int(os.getenv("SMTP_TIMEOUT", "10"))
 SMTP_FROM_ADDRESS: str = os.getenv("SMTP_FROM_ADDRESS", "probe@yourdomain.com")
 
+
+def _as_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Timeouts for background worker stages (web API mode)
+DISCOVERY_TIMEOUT_SECONDS: int = int(os.getenv("DISCOVERY_TIMEOUT_SECONDS", "12"))
+SMTP_VALIDATION_TIMEOUT_SECONDS: int = int(os.getenv("SMTP_VALIDATION_TIMEOUT_SECONDS", "15"))
+
+# SMTP is often blocked on cloud hosts (port 25). Disable by default on Render
+# to keep runs responsive. Local runs keep SMTP enabled by default.
+ENABLE_SMTP_VALIDATION: bool = _as_bool(
+    "ENABLE_SMTP_VALIDATION",
+    default=not bool(os.getenv("RENDER")),
+)
+
 # ── Scraping settings ───────────────────────────────────────────────────────
 SEARCH_ENGINE_URL: str = "https://html.duckduckgo.com/html/"
 REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "15"))

@@ -152,6 +152,24 @@ If your Vercel project still does not apply rewrites (for example, different Roo
 * default: `https://zora-backend-0jg5.onrender.com`
 * optional runtime override: `window.ZORA_API_BASE_URL`
 
+### Why Validation Can Feel Slow
+
+If you request many profiles (for example 10), step 2 can be slow because each profile may trigger web discovery plus SMTP probing.
+
+To avoid long stalls in hosted deployments, Zora now supports worker timeouts and SMTP toggles:
+
+* `DISCOVERY_TIMEOUT_SECONDS` (default `12`)
+* `SMTP_VALIDATION_TIMEOUT_SECONDS` (default `15`)
+* `ENABLE_SMTP_VALIDATION` (default `false` on Render, `true` locally)
+
+Recommended for Render:
+
+* `ENABLE_SMTP_VALIDATION=false`
+* `DISCOVERY_TIMEOUT_SECONDS=8` to `12`
+* `SMTP_VALIDATION_TIMEOUT_SECONDS=10` to `15`
+
+This keeps progress moving and prevents the UI from appearing stuck on a single profile.
+
 ## Tech Stack
 
 * **Core:** Python, FastAPI, Server-Sent Events (SSE)

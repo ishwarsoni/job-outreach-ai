@@ -184,6 +184,14 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
             "message": "Searching for real emails (web, GitHub)..."
         })
 
+        if not config.ENABLE_SMTP_VALIDATION:
+            _record_event(job_id, "step", {
+                "step": 2,
+                "title": "Email Discovery",
+                "status": "running",
+                "message": "SMTP validation disabled in this environment for faster runs.",
+            })
+
         validated_count = 0
         for i, p in enumerate(profiles):
             first, last, p_domain = p["first_name"], p["last_name"], p["domain"]
@@ -195,9 +203,21 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
 
             # Free Discovery
             try:
-                discovered = await loop.run_in_executor(
-                    None, lambda f=first, l=last, d=p_domain, c=p.get("company", ""): discover_email(f, l, d, c)
+                discovered = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda f=first, l=last, d=p_domain, c=p.get("company", ""): discover_email(f, l, d, c),
+                    ),
+                    timeout=config.DISCOVERY_TIMEOUT_SECONDS,
                 )
+            except asyncio.TimeoutError:
+                _record_error(
+                    job_id,
+                    "email_discovery",
+                    "Timed out",
+                    f"No result within {config.DISCOVERY_TIMEOUT_SECONDS}s for {p['full_name']}",
+                )
+                discovered = None
             except Exception as e:
                 _record_error(job_id, "email_discovery", "API or search timeout", str(e))
                 discovered = None
@@ -207,26 +227,41 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
                 p["email_confidence"] = "found"
                 validated_count += 1
             else:
-                # SMTP Validation
-                try:
-                    candidates = await loop.run_in_executor(
-                        None, lambda f=clean_first, l=clean_last, d=p_domain: validate_emails(f, l, d)
-                    )
-                    winner = best_email(candidates)
-                    if winner:
-                        p["validated_email"] = winner
-                        best_result = next((c for c in candidates if c.address == winner), None)
-                        p["email_confidence"] = "verified" if best_result and best_result.result == ValidationResult.VALID else "likely"
-                        validated_count += 1
-                    else:
+                # SMTP validation can be expensive/blocked on cloud networks.
+                if config.ENABLE_SMTP_VALIDATION:
+                    try:
+                        candidates = await asyncio.wait_for(
+                            loop.run_in_executor(
+                                None,
+                                lambda f=clean_first, l=clean_last, d=p_domain: validate_emails(f, l, d),
+                            ),
+                            timeout=config.SMTP_VALIDATION_TIMEOUT_SECONDS,
+                        )
+                        winner = best_email(candidates)
+                        if winner:
+                            p["validated_email"] = winner
+                            best_result = next((c for c in candidates if c.address == winner), None)
+                            p["email_confidence"] = "verified" if best_result and best_result.result == ValidationResult.VALID else "likely"
+                            validated_count += 1
+                        else:
+                            p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                            p["email_confidence"] = "guessed"
+                    except asyncio.TimeoutError:
+                        _record_error(
+                            job_id,
+                            "smtp_validation",
+                            "Timed out",
+                            f"No result within {config.SMTP_VALIDATION_TIMEOUT_SECONDS}s for {p['full_name']}",
+                        )
                         p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
                         p["email_confidence"] = "guessed"
-                        validated_count += 1
-                except Exception as e:
-                    _record_error(job_id, "smtp_validation", "Timeout or network restriction", str(e))
+                    except Exception as e:
+                        _record_error(job_id, "smtp_validation", "Timeout or network restriction", str(e))
+                        p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                        p["email_confidence"] = "guessed"
+                else:
                     p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
                     p["email_confidence"] = "guessed"
-                    validated_count += 1
 
             _record_event(job_id, "validation_progress", {
                 "index": i, "total": len(profiles), "name": p["full_name"],
