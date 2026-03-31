@@ -1,14 +1,13 @@
 """
-email_drafter.py — Generates personalised cold outreach emails via the NVIDIA
-NIM API (OpenAI-compatible endpoint) using the Devstral-2-123B-Instruct model.
+email_drafter.py — Generates short, personalised cold outreach emails via the
+NVIDIA NIM API (OpenAI-compatible endpoint) using the Devstral model.
 
 Uses the ``openai`` Python SDK with the base URL pointed to NVIDIA's NIM
 endpoint and the API key loaded from a ``.env`` file through ``config.py``.
 
 The core function :func:`draft_email` accepts a target's name, role, company,
-and the sender's tech-skills dict, then returns a concise 3-paragraph email
-whose second paragraph maps those skills directly to challenges the target
-role is likely facing.
+and the sender's tech-skills dict, then returns a short 2-paragraph email
+(under 80 words) with a natural, human tone.
 """
 
 from __future__ import annotations
@@ -55,29 +54,21 @@ def _get_client() -> OpenAI:
 # ─── System prompt ──────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are an expert cold-email copywriter for software engineers pursuing new
-roles.  Your emails are direct, technically credible, and free of filler.
+You write short cold emails from a software engineer looking for work.
+Keep it human—write like a real person, not a copywriter.
 
-STRICT RULES — violate none:
-1.  Write EXACTLY 3 paragraphs.  No more, no fewer.
-2.  Paragraph 1 (2–3 sentences): Open with the recipient's name and a
-    *specific* observation about their company or team that proves genuine
-    research.  State why you are reaching out — one line, no grovelling.
-3.  Paragraph 2 (3–4 sentences): Map the sender's technical skills
-    DIRECTLY to concrete pain points or opportunities that someone in the
-    target's role at that company is likely dealing with.  Use ONLY the
-    skills listed in the provided profile — never invent capabilities the
-    sender does not have.  Be specific: name technologies, scale, or
-    outcomes where possible.
-4.  Paragraph 3 (1–2 sentences): A clear, low-friction call to action
-    (e.g. "Would a 15-minute call next week work?").  No desperation, no
-    clichés like "I'd love to pick your brain."
-5.  Tone: confident peer-to-peer.  Zero exclamation marks.
-6.  Subject line: a short, curiosity-driven line at the very top, prefixed
-    with "Subject: ".
-7.  Total word count: under 180 words (excluding the subject line).
-8.  Do NOT include placeholders like [Your Name] — the sender will sign
-    the email themselves.
+RULES:
+1.  Subject line on line 1 prefixed with "Subject: " — keep it short and specific.
+2.  EXACTLY 2 short paragraphs after the subject line.
+3.  Paragraph 1 (1-2 sentences): Greet by first name, say you're interested
+    in their team, mention ONE skill from the sender's profile that fits
+    their role. Do NOT make up facts about their company.
+4.  Paragraph 2 (1 sentence): Simple call to action like
+    "Would a quick chat this week work?"
+5.  TOTAL body under 80 words. Shorter is better.
+6.  Tone: casual, confident, peer-to-peer. No exclamation marks.
+7.  No placeholders, no brackets, no sign-off, no signature.
+8.  Only mention skills the sender actually has. Never invent anything.
 """
 
 
@@ -90,21 +81,19 @@ def _build_user_prompt(
     tech_skills: dict[str, Any],
 ) -> str:
     """Assemble the user-facing prompt that feeds into Devstral."""
-    skills_block = json.dumps(tech_skills, indent=2)
+    # Flatten skills into a simple comma-separated list
+    flat_skills: list[str] = []
+    for key, val in tech_skills.items():
+        if isinstance(val, list):
+            flat_skills.extend(str(s) for s in val)
+    skills_line = ", ".join(flat_skills) if flat_skills else json.dumps(tech_skills)
     return (
-        f"Write a cold outreach email for the following scenario.\n\n"
-        f"RECIPIENT:\n"
-        f"  Name   : {target_name}\n"
-        f"  Role   : {target_role}\n"
-        f"  Company: {target_company}\n\n"
-        f"SENDER'S TECHNICAL PROFILE (use ONLY these skills):\n"
-        f"{skills_block}\n\n"
-        f"TASK:\n"
-        f"Identify 2-3 realistic technical challenges that a {target_role} at "
-        f"{target_company} probably faces right now.  Then show — in concrete "
-        f"terms — how the sender's profile addresses those challenges.\n\n"
-        f"OUTPUT: Subject line on line 1, then exactly 3 paragraphs, "
-        f"under 180 words total.  No placeholders."
+        f"Write a short cold email.\n\n"
+        f"TO: {target_name}, {target_role} at {target_company}\n"
+        f"SENDER'S SKILLS: {skills_line}\n\n"
+        f"Pick the ONE most relevant skill for their role and mention it "
+        f"naturally. Do NOT guess or invent details about {target_company}. "
+        f"Keep it under 80 words. Subject line + 2 paragraphs only."
     )
 
 

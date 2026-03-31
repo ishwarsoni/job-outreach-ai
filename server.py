@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import traceback
 from pathlib import Path
 
@@ -28,7 +27,8 @@ from starlette.responses import StreamingResponse
 
 import config
 from target_finder import find_targets
-from email_validator import validate_emails, best_email
+from email_validator import validate_emails, best_email, ValidationResult
+from email_finder import discover_email
 from email_drafter import draft_email
 from data_export import export_to_csv
 
@@ -69,9 +69,14 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+import re as _re
+
 # Words that indicate a job-title was scraped instead of a real name
 _TITLE_WORDS = {"lead", "recruiter", "manager", "engineer", "director",
-                "specialist", "coordinator", "consultant", "analyst"}
+                "specialist", "coordinator", "consultant", "analyst",
+                "founder", "co-founder", "ceo", "cto", "cfo", "vp",
+                "president", "head", "senior", "junior", "principal",
+                "associate", "intern", "architect", "developer"}
 
 
 def _looks_like_title(name: str) -> bool:
@@ -79,12 +84,30 @@ def _looks_like_title(name: str) -> bool:
     return bool(_TITLE_WORDS & {w.lower() for w in name.split()})
 
 
+def _clean_name(raw: str) -> str:
+    """Strip scraped junk from a name fragment.
+
+    Handles patterns like:
+      'Spencer – Co-Founder at Yellow.ai'  →  'Spencer'
+      'Jane, Sr. Engineer'                 →  'Jane'
+      'Bob (He/Him)'                       →  'Bob'
+    """
+    # Cut at common separators that indicate a role/company follows
+    for sep in (" – ", " - ", " at ", " | ", "(", ","):
+        if sep in raw:
+            raw = raw.split(sep, 1)[0]
+    # Remove anything that isn't a letter, space, or apostrophe
+    raw = _re.sub(r"[^a-zA-Z ']", "", raw)
+    # Take only the first word (the actual name)
+    parts = raw.strip().split()
+    return parts[0] if parts else raw.strip()
+
+
 def _clean_for_email(text: str) -> str:
     """Normalise a name fragment for use in an email local-part."""
-    if "," in text:
-        text = text.split(",", 1)[0]
-    out = text.lower()
-    for ch in (" ", "'", ",", "-", "/", "\\", "|"):
+    cleaned = _clean_name(text)
+    out = cleaned.lower()
+    for ch in (" ", "'", ",", "-", "/", "\\", "|", "."):
         out = out.replace(ch, "")
     return out.strip(".")
 
@@ -147,7 +170,7 @@ async def search_pipeline(request: Request):
             })
 
             # Run blocking I/O in a thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             profiles = await loop.run_in_executor(
                 None,
                 lambda: find_targets(
@@ -162,6 +185,7 @@ async def search_pipeline(request: Request):
                 p.setdefault("domain", domain)
                 p.setdefault("validated_email", "")
                 p.setdefault("email_body", "")
+                p.setdefault("email_confidence", "")
 
             yield _sse_event("step", {
                 "step": 1,
@@ -191,12 +215,12 @@ async def search_pipeline(request: Request):
                 })
                 return
 
-            # ── Step 2: Email validation ─────────────────────────────────
+            # ── Step 2: Email discovery & validation ─────────────────────
             yield _sse_event("step", {
                 "step": 2,
-                "title": "Email Validation",
+                "title": "Email Discovery",
                 "status": "running",
-                "message": "Validating email addresses via SMTP...",
+                "message": "Searching for real emails (web, GitHub)...",
             })
 
             validated_count = 0
@@ -208,28 +232,54 @@ async def search_pipeline(request: Request):
                 # Skip rows where a job title was scraped as a name
                 if _looks_like_title(first) or _looks_like_title(last):
                     p["validated_email"] = ""
+                    p["email_confidence"] = ""
                     continue
 
+                # Clean scraped junk from names before using them
+                clean_first = _clean_for_email(first)
+                clean_last = _clean_for_email(last)
+
+                # ── Try free email discovery first ───────────────────
                 try:
-                    candidates = await loop.run_in_executor(
+                    discovered = await loop.run_in_executor(
                         None,
-                        lambda f=first, l=last, d=p_domain: validate_emails(f, l, d),
+                        lambda f=first, l=last, d=p_domain, c=p.get("company", ""): discover_email(f, l, d, c),
                     )
-                    winner = best_email(candidates)
-                    if winner:
-                        p["validated_email"] = winner
-                        validated_count += 1
-                    else:
-                        clean_first = _clean_for_email(first)
-                        clean_last = _clean_for_email(last)
-                        p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
-                        validated_count += 1
                 except Exception as exc:
-                    logger.error("Validation failed for %s: %s", p["full_name"], exc)
-                    clean_first = _clean_for_email(first)
-                    clean_last = _clean_for_email(last)
-                    p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                    logger.warning("Email discovery error for %s: %s", p["full_name"], exc)
+                    discovered = None
+
+                if discovered:
+                    p["validated_email"] = discovered
+                    p["email_confidence"] = "found"
                     validated_count += 1
+                else:
+                    # ── Fall back to SMTP validation ─────────────────
+                    try:
+                        candidates = await loop.run_in_executor(
+                            None,
+                            lambda f=clean_first, l=clean_last, d=p_domain: validate_emails(f, l, d),
+                        )
+                        winner = best_email(candidates)
+                        if winner:
+                            p["validated_email"] = winner
+                            best_result = next(
+                                (c for c in candidates if c.address == winner), None
+                            )
+                            if best_result and best_result.result == ValidationResult.VALID:
+                                p["email_confidence"] = "verified"
+                            else:
+                                p["email_confidence"] = "likely"
+                            validated_count += 1
+                        else:
+                            p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                            p["email_confidence"] = "guessed"
+                            validated_count += 1
+                    except Exception as exc:
+                        logger.error("Validation failed for %s: %s", p["full_name"], exc)
+                        p["validated_email"] = f"{clean_first}.{clean_last}@{p_domain}"
+                        p["email_confidence"] = "guessed"
+                        validated_count += 1
 
                 # Stream progress update for this profile
                 yield _sse_event("validation_progress", {
@@ -237,29 +287,48 @@ async def search_pipeline(request: Request):
                     "total": len(profiles),
                     "name": p["full_name"],
                     "email": p["validated_email"],
+                    "confidence": p.get("email_confidence", ""),
                 })
 
             yield _sse_event("step", {
                 "step": 2,
-                "title": "Email Validation",
+                "title": "Email Discovery",
                 "status": "done",
-                "message": f"Validated {validated_count} email(s)",
+                "message": f"Found/validated {validated_count} email(s)",
             })
 
-            # Send updated profiles with emails
+            # ── Filter: keep only profiles with real emails ──────────────
+            _TRUSTWORTHY = {"found", "verified", "likely"}
+            accurate = [
+                p for p in profiles
+                if p.get("email_confidence") in _TRUSTWORTHY
+            ]
+
+            # Clear email/body on guessed profiles so they show as "no email"
+            for p in profiles:
+                if p.get("email_confidence") not in _TRUSTWORTHY:
+                    p["validated_email"] = ""
+                    p["email_body"] = ""
+
+            logger.info(
+                "Filtered to %d accurate email(s) out of %d total profiles.",
+                len(accurate), len(profiles),
+            )
+
+            # Send updated profiles (guessed ones shown without email)
             yield _sse_event("profiles", {
                 "profiles": profiles,
             })
 
-            # ── Step 3: Email drafting ───────────────────────────────────
+            # ── Step 3: Email drafting (only for accurate emails) ────────
             yield _sse_event("step", {
                 "step": 3,
                 "title": "Email Drafting",
                 "status": "running",
-                "message": "Generating personalized cold emails...",
+                "message": f"Drafting emails for {len(accurate)} verified contact(s)...",
             })
 
-            draftable = [p for p in profiles if p.get("validated_email")]
+            draftable = accurate
             drafted_count = 0
 
             for i, p in enumerate(draftable):

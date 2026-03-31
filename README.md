@@ -1,12 +1,13 @@
 <p align="center">
   <h1 align="center">🎯 AI-Powered Job Search Outreach Agent</h1>
   <p align="center">
-    <em>Automate your job search — find hiring managers, validate emails, and draft personalized outreach at scale.</em>
+    <em>Automate your job search — find hiring managers, discover real emails, and draft personalized outreach at scale.</em>
   </p>
   <p align="center">
     <img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10+">
     <img src="https://img.shields.io/badge/LLM-NVIDIA%20Devstral-76b900?logo=nvidia&logoColor=white" alt="NVIDIA Devstral">
     <img src="https://img.shields.io/badge/search-Google%20%2B%20DuckDuckGo-f5a623" alt="Google + DuckDuckGo">
+    <img src="https://img.shields.io/badge/emails-Real%20Discovery-22c55e" alt="Real Email Discovery">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   </p>
 </p>
@@ -19,50 +20,45 @@ A fully automated **cold-outreach pipeline** designed for job seekers. Give it a
 
 1. **🔍 Find** real hiring managers on LinkedIn via Google Search (with DuckDuckGo fallback)
 2. **🤖 Verify** candidates using LLM-based relevance filtering (NVIDIA Devstral)
-3. **📧 Validate** their corporate email addresses through DNS MX lookups & SMTP probing
-4. **✍️ Draft** personalized cold emails powered by AI — tailored to the recipient's role
-5. **📊 Export** everything to a clean, structured CSV ready for your outreach workflow
+3. **📧 Discover** their real corporate email addresses using web dorking, company website scraping, and GitHub commit analysis — **no API keys or signups required**
+4. **✍️ Draft** short, personalized cold emails (≤80 words) powered by AI
+5. **📊 Export** verified results to a clean CSV — **only accurate contacts, no guesses**
 
-> **No emails are ever sent.** This tool only finds, validates, and prepares — you stay in full control of what gets sent.
+> **No emails are ever sent.** This tool only finds, discovers, and prepares — you stay in full control of what gets sent.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         main.py                                  │
-│                    (Orchestrator / CLI)                           │
-│                                                                  │
-│  Step 1          Step 2              Step 3          Step 4      │
-│  ┌──────────┐   ┌────────────────┐   ┌────────────┐  ┌────────┐ │
-│  │ Target   │──▶│ Email          │──▶│ Email      │─▶│ Data   │ │
-│  │ Finder   │   │ Validator      │   │ Drafter    │  │ Export │ │
-│  └──────────┘   └────────────────┘   └────────────┘  └────────┘ │
-└──────────────────────────────────────────────────────────────────┘
-       │                  │                   │              │
-       ▼                  ▼                   ▼              ▼
-  Google Search      DNS MX Lookup      NVIDIA NIM API    CSV File
-  + DuckDuckGo       SMTP RCPT TO       (Devstral LLM)
-  + LLM Verify       Catch-All Check
+┌──────────────────────────────────────────────────────────────────────┐
+│                          server.py / main.py                         │
+│                     (Orchestrator / Web + CLI)                        │
+│                                                                      │
+│  Step 1            Step 2              Step 3            Step 4      │
+│  ┌──────────┐     ┌────────────────┐   ┌────────────┐   ┌────────┐  │
+│  │ Target   │────▶│ Email          │──▶│ Email      │──▶│ Data   │  │
+│  │ Finder   │     │ Discovery      │   │ Drafter    │   │ Export │  │
+│  └──────────┘     └────────────────┘   └────────────┘   └────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+       │                   │                    │              │
+       ▼                   ▼                    ▼              ▼
+  Google Search       Web Dorking          NVIDIA NIM API    CSV File
+  + DuckDuckGo        Website Scraping     (Devstral LLM)
+  + LLM Verify        GitHub Commits
+                      SMTP Fallback
 ```
 
 | File | Purpose |
 |---|---|
+| `server.py` | FastAPI web server with SSE streaming |
 | `main.py` | CLI entry point & pipeline orchestrator |
 | `config.py` | Environment variables, constants, and your tech profile |
 | `target_finder.py` | LinkedIn profile discovery via web search + LLM verification |
-| `email_validator.py` | Email permutation generator + DNS/SMTP validation |
+| `email_finder.py` | **Real email discovery** — web dorking, website scraping, GitHub commits |
+| `email_validator.py` | Email permutation generator + DNS/SMTP validation (fallback) |
 | `email_drafter.py` | Personalized cold email drafting via NVIDIA Devstral |
 | `data_export.py` | CSV writer with Excel-compatible encoding |
-
----
-
-## 🎨 Web Dashboard
-
-The project now includes a beautiful, modern web dashboard for running the pipeline interactively:
-
-![Job Search Agent Dashboard](frontend_screenshot.png)
 
 ---
 
@@ -112,8 +108,8 @@ NVIDIA_API_KEY=nvapi-your_key_here
 | `NVIDIA_API_KEY` | ✅ | — | Your NVIDIA NIM API key |
 | `NVIDIA_MODEL` | | `mistralai/devstral-2-123b-instruct-2512` | LLM model for email drafting & verification |
 | `NVIDIA_BASE_URL` | | `https://integrate.api.nvidia.com/v1` | NVIDIA NIM API endpoint |
-| `NVIDIA_TEMPERATURE` | | `0.7` | LLM response creativity (0.0–1.0) |
-| `NVIDIA_MAX_TOKENS` | | `1024` | Max tokens per LLM response |
+| `NVIDIA_TEMPERATURE` | | `0.5` | LLM response creativity (0.0–1.0) |
+| `NVIDIA_MAX_TOKENS` | | `300` | Max tokens per LLM response |
 | `SMTP_FROM_ADDRESS` | | `probe@yourdomain.com` | Address used in `MAIL FROM` probe |
 | `SMTP_TIMEOUT` | | `10` | Seconds before SMTP probe times out |
 | `REQUEST_TIMEOUT` | | `15` | HTTP request timeout for web searches |
@@ -133,9 +129,10 @@ python server.py
 
 The web interface provides a modern, dark-themed dashboard with a sleek violet/purple aesthetic:
 - **Real-time pipeline progress** — watch each step complete with live status updates
-- **Results cards** — browse discovered profiles, validated emails, and LinkedIn links in a responsive grid layout
-- **Email preview** — click to view AI-drafted emails in a slide-over panel with copy-to-clipboard support
-- **CSV download** — export results directly from the browser
+- **Email confidence badges** — see at a glance which emails are ✓ Found, ✓ Verified, ~ Likely
+- **Automatic filtering** — only profiles with real, discovered emails get drafts and export
+- **One-click Gmail compose** — opens Gmail with To, Subject, and Body pre-filled
+- **CSV download** — export verified results directly from the browser
 
 #### Option B: CLI
 
@@ -151,12 +148,20 @@ python main.py -c Stripe -t "Head of Engineering" -d stripe.com
 
 # Dry-run — test search only, skip validation & drafting
 python main.py --company "Google" --title "Engineering Manager" --dry-run
-
-# Verbose logging — see detailed debug output
-python main.py -c Stripe -t "Head of Engineering" -d stripe.com -v
 ```
 
-### 4. View Results
+### 4. Example Searches
+
+These companies work well for testing (engineers tend to have public emails):
+
+| Company | Job Title | Domain |
+|---|---|---|
+| Vercel | Engineering Manager | `vercel.com` |
+| GitLab | Engineering Manager | `gitlab.com` |
+| Stripe | Software Engineer | `stripe.com` |
+| Basecamp | Product Manager | `basecamp.com` |
+
+### 5. View Results
 
 Results are saved to `outreach_results.csv` with the following columns:
 
@@ -169,7 +174,8 @@ Results are saved to `outreach_results.csv` with the following columns:
 | `company` | Company name |
 | `domain` | Corporate email domain |
 | `profile_url` | LinkedIn profile URL |
-| `validated_email` | Validated (or best-guess) email address |
+| `validated_email` | Discovered/validated email address |
+| `email_confidence` | `found`, `verified`, `likely` — guessed emails are excluded |
 | `email_body` | AI-drafted personalized cold outreach email |
 
 ---
@@ -181,33 +187,64 @@ Results are saved to `outreach_results.csv` with the following columns:
 Discovers LinkedIn profiles matching your search criteria using a dual-search strategy:
 
 - **Google Search** (primary) — more accurate results via `googlesearch-python`
-- **DuckDuckGo** (fallback) — used when Google is unavailable, via `duckduckgo_search`
-- **LLM Verification** — sends candidate profiles to NVIDIA Devstral to verify they actually hold the specified job title at the target company
+- **DuckDuckGo** (fallback) — used when Google is unavailable
+- **LLM Verification** — sends candidate profiles to NVIDIA Devstral to verify they actually hold the specified role at the target company
 - **Smart Filtering** — deduplication, company-name matching, credential stripping, and name validation
 
-### 📧 Email Validator (`email_validator.py`)
+### 📧 Email Discovery (`email_finder.py`)
 
-Generates and validates corporate email addresses without ever sending a message:
+Finds **real email addresses** published on the internet — no API keys or signups required:
 
-1. **Permutation Generation** — creates 10 common corporate email formats (e.g., `first.last@`, `flast@`, `first@`, etc.)
+1. **Web Search Dorking** — searches DuckDuckGo for `"firstname lastname" "@domain"` and extracts matching emails from result snippets and scraped pages
+2. **Company Website Scraping** — crawls common pages on the company domain (`/about`, `/team`, `/contact`, `/people`, etc.) and extracts `@domain` emails. Filters out generic addresses like `info@`, `support@`, `hr@`
+3. **GitHub Commit Emails** — searches GitHub for the person, reads their public push events to find commit-author emails. The GitHub API is free (60 requests/hour, no key needed)
+
+> **Only real, discovered emails are kept.** Profiles where no email could be found or verified are shown in the UI but without email actions or drafts.
+
+### 📧 Email Validator (`email_validator.py`) — Fallback
+
+If the email discovery module doesn't find a published email, the validator tries SMTP probing:
+
+1. **Permutation Generation** — creates 10 common corporate email formats
 2. **DNS MX Lookup** — resolves the domain's mail exchange servers
-3. **SMTP `RCPT TO` Probe** — connects to the primary MX server, issues `HELO`/`MAIL FROM`/`RCPT TO`, and reads the response code. **No email is ever sent.**
-4. **Catch-All Detection** — probes a random fake address first; if accepted, marks all `250` responses as `CATCH_ALL` to avoid false positives
+3. **SMTP `RCPT TO` Probe** — tests if the mailbox exists. **No email is ever sent.**
+4. **Catch-All Detection** — detects domains that accept everything to avoid false positives
+
+> **Note:** SMTP probing requires port 25 to be open. Most home ISPs block it — this is why the email discovery module was added as the primary method.
 
 ### ✍️ Email Drafter (`email_drafter.py`)
 
 Generates personalized cold outreach emails via NVIDIA's Devstral LLM:
 
-- **Strict Formatting** — exactly 3 paragraphs, under 180 words, with subject line on line 1
-- **Skills Mapping** — maps your technical skills to the target company's likely pain points
-- **No Generic Fluff** — the system prompt enforces specificity and relevance
+- **Short & Natural** — exactly 2 paragraphs, ≤80 words, written like a real person
+- **No Hallucinations** — the prompt explicitly forbids making up facts about the target company
+- **Zero Placeholders** — every email is ready to send as-is, no `[Your Name]` tokens
+- **Skills Mapping** — maps your technical skills to the target role
 - **Retry Logic** — exponential backoff with jitter on rate limits
+
+### 📨 Gmail Integration (`app.js`)
+
+When the pipeline finishes, each verified profile card shows an **Email** button:
+
+- Opens **Gmail Compose** in a new tab with **To**, **Subject**, and **Body** pre-filled
+- You review, edit if needed, and hit Send — no copy-paste required
 
 ### 📊 Data Export (`data_export.py`)
 
-- Writes results to a UTF-8 BOM encoded CSV (opens correctly in Excel)
-- Uses `csv.QUOTE_ALL` to prevent delimiter-in-data issues
-- Overwrites on each run to keep results fresh
+- Writes results to a UTF-8 BOM-encoded CSV (opens correctly in Excel)
+- Includes `email_confidence` column so you know how each email was found
+- Only exports profiles with verified/found emails — no guesses in the CSV
+
+---
+
+## 🎨 Email Confidence Levels
+
+| Badge | Meaning | How it was found |
+|---|---|---|
+| ✓ **Found** | Real email found online | Web search, company website, or GitHub commits |
+| ✓ **Verified** | SMTP confirmed the mailbox exists | SMTP `RCPT TO` returned 250 (Valid) |
+| ~ **Likely** | Probably correct, can't fully verify | SMTP 250 but domain is catch-all |
+| *(excluded)* | Guessed pattern — **not shown** | Only `first.last@domain`, not trustworthy |
 
 ---
 
@@ -237,13 +274,14 @@ The pipeline is designed to be resilient — individual failures never crash the
 | Scenario | What Happens |
 |---|---|
 | Google Search blocked / CAPTCHA | Falls back to DuckDuckGo automatically |
-| HTTP 429 / 503 rate limit | Exponential backoff with jitter, retries up to N times |
+| HTTP 429 / 503 rate limit | Exponential backoff with jitter |
 | No matching LinkedIn profiles | Logs a warning; pipeline exits cleanly |
 | Name looks like a job title | Profile is skipped to prevent false positives |
-| No MX records for domain | Email candidates marked `UNKNOWN`; best-guess fallback used |
+| Email discovery finds nothing | Falls back to SMTP validation, then pattern guess (excluded from results) |
+| No MX records for domain | Email candidates marked `UNKNOWN` |
 | SMTP timeout / connection refused | Individual candidate marked `UNKNOWN`; pipeline continues |
 | NVIDIA API rate limit | Exponential backoff; raises `RuntimeError` after exhausting retries |
-| Empty / invalid LLM response | Retried up to `max_retries` times |
+| GitHub API rate limit (60/hr) | Method skipped; other discovery methods tried |
 
 ---
 
@@ -260,15 +298,16 @@ Job Search Agent/
 ├── main.py               # CLI entry point & pipeline orchestrator
 ├── server.py             # FastAPI web server with SSE streaming
 ├── config.py             # Configuration & environment loader
-├── target_finder.py      # LinkedIn profile discovery
-├── email_validator.py    # Email permutation & SMTP validation
-├── email_drafter.py      # AI-powered email drafting
-├── data_export.py        # CSV export
+├── target_finder.py      # LinkedIn profile discovery (Google + DuckDuckGo + LLM)
+├── email_finder.py       # Real email discovery (web dork + website scrape + GitHub)
+├── email_validator.py    # Email permutation & SMTP validation (fallback)
+├── email_drafter.py      # AI-powered email drafting (≤80 words, 2 paragraphs)
+├── data_export.py        # CSV export with confidence column
 │
 ├── frontend/
 │   ├── index.html        # Web UI — main page
-│   ├── app.js            # Client-side logic (SSE, rendering)
-│   └── styles.css        # Dark theme with glassmorphism
+│   ├── app.js            # Client-side logic (SSE, rendering, confidence badges)
+│   └── styles.css        # Dark violet theme with glassmorphism
 │
 └── outreach_results.csv  # Output (generated after first run)
 ```
@@ -280,7 +319,7 @@ Job Search Agent/
 | Package | Purpose |
 |---|---|
 | `googlesearch-python` | Google Search scraping for LinkedIn profile discovery |
-| `ddgs` | DuckDuckGo search (fallback engine) |
+| `ddgs` | DuckDuckGo search (fallback engine + email dorking) |
 | `dnspython` | DNS MX record resolution |
 | `openai` | NVIDIA NIM API client (OpenAI-compatible) |
 | `python-dotenv` | Environment variable loading from `.env` |
@@ -295,20 +334,10 @@ Job Search Agent/
 > This tool is intended for **personal job-search assistance** only.
 
 - **No emails are sent** — the SMTP probe only issues `RCPT TO` and disconnects immediately
+- **Email discovery** uses only publicly available information (web pages, GitHub public events)
 - **Scraping LinkedIn** search results via a search engine is subject to their Terms of Service — use responsibly and at low volume
 - **Comply with CAN-SPAM / GDPR** when actually sending outreach emails through your own email client
 - **Rate limiting is built in** — the tool includes delays and backoff to be respectful to external services
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to open an issue or submit a pull request. Some ideas:
-
-- Add support for additional search engines
-- Extend email validation with Hunter.io or similar API integrations
-- Build a web UI for non-technical users
-- Add support for bulk company lists
 
 ---
 

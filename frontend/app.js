@@ -5,7 +5,7 @@
  *   - Form submission → SSE stream from /api/search
  *   - Pipeline stepper progress updates
  *   - Results card grid rendering (real-time)
- *   - Email preview drawer
+ *   - Gmail compose integration (opens pre-filled drafts in Gmail)
  *   - CSV download
  *   - Toast notifications
  */
@@ -35,14 +35,7 @@ const dom = {
     // Empty state
     emptyState: document.getElementById('empty-state'),
 
-    // Email panel
-    emailOverlay: document.getElementById('email-overlay'),
-    panelTo: document.getElementById('panel-to'),
-    panelSubject: document.getElementById('panel-subject'),
-    panelBody: document.getElementById('panel-body'),
-    btnClosePanel: document.getElementById('btn-close-panel'),
-    btnCopyEmail: document.getElementById('btn-copy-email'),
-    copyText: document.getElementById('copy-text'),
+    // Email panel (removed — Gmail compose opens directly)
 
     // Download
     btnDownload: document.getElementById('btn-download'),
@@ -111,9 +104,21 @@ function renderResults(profiles) {
         // Initials avatar
         const initials = ((profile.first_name?.[0] || '') + (profile.last_name?.[0] || '')).toUpperCase() || '?';
 
-        // Email display
+        // Email display with confidence badge
+        const confidence = profile.email_confidence || '';
+        let confidenceBadge = '';
+        if (confidence === 'found') {
+            confidenceBadge = '<span class="conf-badge conf-badge--found" title="Found on the public web">✓ Found</span>';
+        } else if (confidence === 'verified') {
+            confidenceBadge = '<span class="conf-badge conf-badge--verified" title="SMTP verified">✓ Verified</span>';
+        } else if (confidence === 'likely') {
+            confidenceBadge = '<span class="conf-badge conf-badge--likely" title="Catch-all domain — likely correct">~ Likely</span>';
+        } else if (confidence === 'guessed') {
+            confidenceBadge = '<span class="conf-badge conf-badge--guessed" title="Best guess — not verified">? Guessed</span>';
+        }
+
         const emailHtml = profile.validated_email
-            ? `<span class="card-email">${profile.validated_email}</span>`
+            ? `<span class="card-email">${profile.validated_email}</span>${confidenceBadge}`
             : `<span class="card-email card-email--pending">Pending…</span>`;
 
         // LinkedIn link
@@ -128,16 +133,27 @@ function renderResults(profiles) {
                </a>`
             : '';
 
-        // Draft button
-        const draftHtml = profile.email_body
-            ? `<button class="card-btn card-btn--draft" data-index="${index}">
+        // Gmail button — opens Gmail compose with pre-filled email
+        const gmailHtml = (profile.email_body && profile.validated_email)
+            ? `<button class="card-btn card-btn--gmail" data-index="${index}">
                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                       <circle cx="12" cy="12" r="3"></circle>
+                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                       <polyline points="22,6 12,13 2,6"></polyline>
                    </svg>
-                   View Draft
+                   Email
                </button>`
-            : `<button class="card-btn card-btn--draft" disabled>No Draft</button>`;
+            : `<button class="card-btn card-btn--gmail" disabled>No Email</button>`;
+
+        // Copy button — copies drafted email to clipboard
+        const copyHtml = profile.email_body
+            ? `<button class="card-btn card-btn--copy" data-index="${index}">
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                   </svg>
+                   Copy
+               </button>`
+            : '';
 
         card.innerHTML = `
             <div class="card-top">
@@ -152,14 +168,21 @@ function renderResults(profiles) {
             </div>
             <div class="card-actions">
                 ${linkedinHtml}
-                ${draftHtml}
+                ${gmailHtml}
+                ${copyHtml}
             </div>
         `;
 
-        // Wire up draft button click
-        const draftBtn = card.querySelector('.card-btn--draft:not([disabled])');
-        if (draftBtn) {
-            draftBtn.addEventListener('click', () => openEmailPanel(index));
+        // Wire up Gmail button click
+        const gmailBtn = card.querySelector('.card-btn--gmail:not([disabled])');
+        if (gmailBtn) {
+            gmailBtn.addEventListener('click', () => openGmailCompose(index));
+        }
+
+        // Wire up Copy button click
+        const copyBtn = card.querySelector('.card-btn--copy');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => copyEmailToClipboard(index, copyBtn));
         }
 
         dom.resultsBody.appendChild(card);
@@ -170,56 +193,51 @@ function renderResults(profiles) {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Email Preview Drawer
+   Gmail Compose — opens Gmail with pre-filled To, Subject, and Body
    ═══════════════════════════════════════════════════════════════════════════ */
 
-let currentEmailIndex = -1;
-
-function openEmailPanel(index) {
-    const profile = currentProfiles[index];
-    if (!profile || !profile.email_body) return;
-
-    currentEmailIndex = index;
-    const body = profile.email_body;
-
-    const lines = body.split('\n');
+function _parseEmailParts(rawBody) {
+    const lines = rawBody.split('\n');
     let subject = '';
-    let emailContent = body;
+    let body = rawBody;
 
     if (lines[0] && lines[0].toLowerCase().startsWith('subject:')) {
         subject = lines[0].replace(/^subject:\s*/i, '').trim();
-        emailContent = lines.slice(1).join('\n').trim();
+        body = lines.slice(1).join('\n').trim();
     } else {
-        subject = lines[0] || 'Cold Outreach';
-        emailContent = lines.slice(1).join('\n').trim();
+        subject = lines[0] || 'Quick question';
+        body = lines.slice(1).join('\n').trim();
     }
-
-    dom.panelTo.textContent = profile.validated_email || profile.full_name;
-    dom.panelSubject.textContent = subject;
-    dom.panelBody.textContent = emailContent;
-    dom.copyText.textContent = 'Copy to Clipboard';
-
-    dom.emailOverlay.classList.add('open');
+    return { subject, body };
 }
 
-function closeEmailPanel() {
-    dom.emailOverlay.classList.remove('open');
-    currentEmailIndex = -1;
+function openGmailCompose(index) {
+    const profile = currentProfiles[index];
+    if (!profile || !profile.email_body || !profile.validated_email) return;
+
+    const { subject, body } = _parseEmailParts(profile.email_body);
+
+    // Build Gmail compose URL
+    const gmailUrl = 'https://mail.google.com/mail/?view=cm'
+        + '&to='  + encodeURIComponent(profile.validated_email)
+        + '&su='  + encodeURIComponent(subject)
+        + '&body=' + encodeURIComponent(body);
+
+    window.open(gmailUrl, '_blank');
+    showToast(`Opening Gmail for ${profile.full_name}`);
 }
 
-async function copyEmailToClipboard() {
-    if (currentEmailIndex < 0) return;
-    const profile = currentProfiles[currentEmailIndex];
+async function copyEmailToClipboard(index, btnEl) {
+    const profile = currentProfiles[index];
     if (!profile || !profile.email_body) return;
 
     try {
         await navigator.clipboard.writeText(profile.email_body);
-        dom.copyText.textContent = 'Copied!';
+        const origHtml = btnEl.innerHTML;
+        btnEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied`;
         showToast('Email copied to clipboard');
-        setTimeout(() => {
-            dom.copyText.textContent = 'Copy to Clipboard';
-        }, 2000);
-    } catch (err) {
+        setTimeout(() => { btnEl.innerHTML = origHtml; }, 2000);
+    } catch {
         showToast('Failed to copy — check browser permissions');
     }
 }
@@ -368,14 +386,4 @@ function downloadCSV() {
    Event Listeners
    ═══════════════════════════════════════════════════════════════════════════ */
 dom.searchForm.addEventListener('submit', handleSearch);
-dom.btnClosePanel.addEventListener('click', closeEmailPanel);
-dom.btnCopyEmail.addEventListener('click', copyEmailToClipboard);
 dom.btnDownload.addEventListener('click', downloadCSV);
-
-dom.emailOverlay.addEventListener('click', (e) => {
-    if (e.target === dom.emailOverlay) closeEmailPanel();
-});
-
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeEmailPanel();
-});

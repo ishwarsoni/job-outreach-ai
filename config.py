@@ -2,8 +2,10 @@
 Configuration module — loads environment variables and defines project-wide constants.
 """
 
+import json
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # ── Load .env from project root ──────────────────────────────────────────────
@@ -11,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # ── API Keys ─────────────────────────────────────────────────────────────────
 NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")  # Optional — free tier: 25 lookups/month
 
 # ── SMTP probe settings ─────────────────────────────────────────────────────
 SMTP_TIMEOUT: int = int(os.getenv("SMTP_TIMEOUT", "10"))
@@ -33,14 +36,13 @@ USER_AGENTS: list[str] = [
 # ── NVIDIA NIM model settings ───────────────────────────────────────────────
 NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "mistralai/devstral-2-123b-instruct-2512")
-NVIDIA_TEMPERATURE: float = float(os.getenv("NVIDIA_TEMPERATURE", "0.7"))
-NVIDIA_MAX_TOKENS: int = int(os.getenv("NVIDIA_MAX_TOKENS", "1024"))
+NVIDIA_TEMPERATURE: float = float(os.getenv("NVIDIA_TEMPERATURE", "0.5"))
+NVIDIA_MAX_TOKENS: int = int(os.getenv("NVIDIA_MAX_TOKENS", "300"))
 
 # ── Output ───────────────────────────────────────────────────────────────────
 OUTPUT_CSV: str = os.getenv("OUTPUT_CSV", "outreach_results.csv")
 
 # ── Your tech profile (override via .env JSON or edit here) ──────────────────
-import json
 
 _default_skills = {
     "languages": ["Python", "JavaScript", "SQL"],

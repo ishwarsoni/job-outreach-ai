@@ -1,10 +1,10 @@
 """
 data_export.py -- Write outreach results to a structured CSV file.
 
-Handles both **create** and **append** workflows:
+Handles a **create/overwrite** workflow:
 
-* First call (file does not exist)  -> create file, write header + rows.
-* Subsequent calls (file exists)    -> append rows, skip duplicate header.
+* Each call overwrites the file with fresh results (header + rows).
+* Encoding is ``utf-8-sig`` (BOM) so that Excel opens the file correctly.
 
 All cells are wrapped in ``csv.QUOTE_ALL`` to avoid delimiter-in-data issues.
 Encoding is ``utf-8-sig`` (BOM) so that Excel opens the file correctly.
@@ -46,6 +46,7 @@ FIELDNAMES: list[str] = [
     "domain",
     "profile_url",
     "validated_email",
+    "email_confidence",
     "email_body",
 ]
 
@@ -161,11 +162,11 @@ if __name__ == "__main__":
     p = export_to_csv(sample[:1], filepath=tmp)
     print(f"  Pass 1 (create):  wrote 1 row  -> {p}")
 
-    # Pass 2 -- append (should NOT duplicate header)
+    # Pass 2 -- overwrite with second sample
     p = export_to_csv(sample[1:], filepath=tmp)
-    print(f"  Pass 2 (append):  wrote 1 row  -> {p}")
+    print(f"  Pass 2 (overwrite):  wrote 1 row  -> {p}")
 
-    # Pass 3 -- append again with a dict that has missing keys
+    # Pass 3 -- overwrite again with a dict that has missing keys
     p = export_to_csv([{"full_name": "Sparse Record"}], filepath=tmp)
     print(f"  Pass 3 (sparse):  wrote 1 row  -> {p}")
 

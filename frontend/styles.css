@@ -722,6 +722,42 @@ a:hover {
     font-family: var(--font-body);
 }
 
+/* ── Email Confidence Badges ──────────────────────────────────────────── */
+.conf-badge {
+    display: inline-block;
+    font-size: 0.64rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.conf-badge--found {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.conf-badge--verified {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.conf-badge--likely {
+    background: rgba(250, 204, 21, 0.12);
+    color: var(--warning);
+    border: 1px solid rgba(250, 204, 21, 0.25);
+}
+
+.conf-badge--guessed {
+    background: rgba(251, 113, 133, 0.12);
+    color: var(--error);
+    border: 1px solid rgba(251, 113, 133, 0.25);
+}
+
 .card-actions {
     display: flex;
     align-items: center;
@@ -768,6 +804,28 @@ a:hover {
     cursor: not-allowed;
 }
 
+.card-btn--gmail {
+    border-color: rgba(219, 68, 55, 0.35);
+    color: #ea4335;
+}
+
+.card-btn--gmail:hover:not(:disabled) {
+    border-color: #ea4335;
+    color: #fff;
+    background: rgba(219, 68, 55, 0.18);
+}
+
+.card-btn--copy {
+    border-color: rgba(167, 139, 250, 0.3);
+    color: var(--accent);
+}
+
+.card-btn--copy:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: #fff;
+    background: var(--accent-glow);
+}
+
 
 /* ── Empty State ───────────────────────────────────────────────────────── */
 .empty-state {
@@ -803,117 +861,6 @@ a:hover {
     font-size: 0.88rem;
     color: var(--text-muted);
     max-width: 360px;
-}
-
-
-/* ── Email Drawer (Slide-Over) ─────────────────────────────────────────── */
-.overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    display: flex;
-    align-items: stretch;
-    justify-content: flex-end;
-    z-index: 200;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--dur-base) var(--ease);
-}
-
-.overlay.open {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.email-drawer {
-    width: min(520px, 90vw);
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    border-left: 1px solid var(--glass-border);
-    box-shadow: -12px 0 48px rgba(0, 0, 0, 0.4);
-    transform: translateX(100%);
-    transition: transform var(--dur-slow) var(--ease);
-}
-
-.overlay.open .email-drawer {
-    transform: translateX(0);
-}
-
-.drawer-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 24px;
-    border-bottom: 1px solid var(--border);
-}
-
-.drawer-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.92rem;
-    font-weight: 600;
-}
-
-.drawer-title svg {
-    color: var(--accent);
-}
-
-.drawer-meta {
-    padding: 14px 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-elevated);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.meta-chip {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-}
-
-.meta-key {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    width: 55px;
-    flex-shrink: 0;
-}
-
-.meta-val {
-    font-size: 0.82rem;
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-}
-
-.drawer-body {
-    flex: 1;
-    padding: 24px;
-    overflow-y: auto;
-    font-size: 0.9rem;
-    line-height: 1.7;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-}
-
-.drawer-placeholder {
-    color: var(--text-muted);
-    text-align: center;
-    padding: 48px 24px;
-}
-
-.drawer-footer {
-    display: flex;
-    justify-content: flex-end;
-    padding: 14px 24px;
-    border-top: 1px solid var(--border);
 }
 
 
@@ -1073,10 +1020,6 @@ a:hover {
 
     .results-grid {
         grid-template-columns: 1fr;
-    }
-
-    .email-drawer {
-        width: 100vw;
     }
 }
 
