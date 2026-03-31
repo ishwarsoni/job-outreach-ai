@@ -29,7 +29,8 @@ import time
 
 import config
 from target_finder import find_targets
-from email_validator import validate_emails, best_email
+from email_finder import discover_email
+from email_validator import validate_emails, best_email, ValidationResult
 from email_drafter import draft_email
 from data_export import export_to_csv
 
@@ -138,6 +139,7 @@ def step_find(
     for p in profiles:
         p.setdefault("domain", domain)
         p.setdefault("validated_email", "")
+        p.setdefault("email_confidence", "")
         p.setdefault("email_body", "")
     if not profiles:
         logger.warning("No profiles found. Try broadening the job title or checking the company name.")
@@ -157,43 +159,68 @@ def _looks_like_title(name: str) -> bool:
 
 
 def step_validate(profiles: list[dict]) -> list[dict]:
-    logger.info("═══ Step 2/4: Email Permutation & Validation ═══")
+    logger.info("═══ Step 2/4: Email Discovery & Validation ═══")
+    
+    _TRUSTWORTHY = {"found", "verified", "likely"}
+    
     for p in profiles:
         first = p["first_name"]
         last = p["last_name"]
         domain = p["domain"]
+        company = p.get("company", "")
 
         # Skip rows where a job title was mistakenly scraped as a name
         if _looks_like_title(first) or _looks_like_title(last):
-            logger.warning(
-                "  Skipping '%s %s' — name looks like a job title, not a person.",
-                first, last,
-            )
-            p["validated_email"] = ""
+            logger.warning("  Skipping '%s %s' — name looks like a job title.", first, last)
             continue
 
+        clean_first = clean_for_email(first)
+        clean_last = clean_for_email(last)
+
+        # 1. Try free discovery methods
         try:
-            candidates = validate_emails(first, last, domain)
+            discovered = discover_email(first, last, domain, company)
+            if discovered:
+                p["validated_email"] = discovered
+                p["email_confidence"] = "found"
+                logger.info("  ✔ FOUND: %s → %s", p["full_name"], discovered)
+                continue
+        except Exception as exc:
+            logger.warning("  Email discovery error for %s: %s", p["full_name"], exc)
+        
+        # 2. Fall back to SMTP validation
+        try:
+            candidates = validate_emails(clean_first, clean_last, domain)
             winner = best_email(candidates)
             if winner:
                 p["validated_email"] = winner
-                logger.info("  ✔ %s → %s", p["full_name"], winner)
+                best_result = next((c for c in candidates if c.address == winner), None)
+                if best_result and best_result.result == ValidationResult.VALID:
+                    p["email_confidence"] = "verified"
+                else:
+                    p["email_confidence"] = "likely"
+                logger.info("  ✔ VERIFIED: %s → %s", p["full_name"], winner)
             else:
-                # Fallback: use the most common pattern unvalidated
-                clean_first = clean_for_email(first)
-                clean_last = clean_for_email(last)
+                # 3. Fallback to guessing (but filter it out later)
                 p["validated_email"] = f"{clean_first}.{clean_last}@{domain}"
-                logger.warning(
-                    "  ⚠ No validated email for %s — using best-guess: %s",
-                    p["full_name"],
-                    p["validated_email"],
-                )
+                p["email_confidence"] = "guessed"
+                logger.warning("  ⚠ GUESSED: %s → %s", p["full_name"], p["validated_email"])
         except Exception as exc:
             logger.error("  ✘ Validation failed for %s: %s", p["full_name"], exc)
-            clean_first = clean_for_email(first)
-            clean_last = clean_for_email(last)
             p["validated_email"] = f"{clean_first}.{clean_last}@{domain}"
-    return profiles
+            p["email_confidence"] = "guessed"
+
+    # Filter out untrustworthy emails so they aren't drafted or exported
+    accurate_profiles = []
+    for p in profiles:
+        if p.get("email_confidence") in _TRUSTWORTHY:
+            accurate_profiles.append(p)
+        else:
+            p["validated_email"] = ""
+            p["email_body"] = ""
+
+    logger.info("Filtered to %d accurate email(s) out of %d total profiles.", len(accurate_profiles), len(profiles))
+    return accurate_profiles
 
 
 def step_draft(profiles: list[dict]) -> list[dict]:

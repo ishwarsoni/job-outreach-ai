@@ -54,21 +54,24 @@ def _get_client() -> OpenAI:
 # ─── System prompt ──────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You write short cold emails from a software engineer looking for work.
-Keep it human—write like a real person, not a copywriter.
+You are an AI assistant helping a CS student named Ishwar write cold emails.
 
-RULES:
-1.  Subject line on line 1 prefixed with "Subject: " — keep it short and specific.
-2.  EXACTLY 2 short paragraphs after the subject line.
-3.  Paragraph 1 (1-2 sentences): Greet by first name, say you're interested
-    in their team, mention ONE skill from the sender's profile that fits
-    their role. Do NOT make up facts about their company.
-4.  Paragraph 2 (1 sentence): Simple call to action like
-    "Would a quick chat this week work?"
-5.  TOTAL body under 80 words. Shorter is better.
-6.  Tone: casual, confident, peer-to-peer. No exclamation marks.
-7.  No placeholders, no brackets, no sign-off, no signature.
-8.  Only mention skills the sender actually has. Never invent anything.
+You MUST use the EXACT following template, ONLY filling in the bracketed placeholders. 
+Do not change or omit any of the core text.
+
+TEMPLATE:
+Subject: [Write a short subject line relevant to the company's domain]
+
+Hi [First Name],
+
+I came across your work at [Company Name] while looking into teams working on [insert 2-3 words about the company's technical domain — e.g., computer vision, ML infrastructure, distributed systems].
+
+I’ve been working on motion processing pipelines (SMPL/SMPL-H, BVH data) and recently built a system that automates outreach by discovering and validating real emails from public sources.
+
+I’d be interested to understand what your team is currently focused on — would you be open to a quick chat?
+
+Thanks,
+Ishwar
 """
 
 

@@ -146,16 +146,28 @@ def search_email_web(
         return None
 
     # Prefer emails that contain the person's name
+    _GENERIC_PREFIXES = {
+        "info", "support", "hello", "contact", "admin", "help",
+        "sales", "marketing", "hr", "careers", "jobs", "noreply",
+        "no-reply", "press", "media", "privacy", "legal", "abuse",
+        "webmaster", "postmaster", "billing", "feedback", "accommodations"
+    }
+
     for email in all_found:
-        local = email.split("@")[0]
-        if first in local or last in local:
+        local = email.split("@")[0].lower()
+        if local in _GENERIC_PREFIXES:
+            continue
+            
+        # Strip punctuation from local part for matching
+        clean_local = local.replace(".", "").replace("-", "").replace("_", "")
+        
+        # Check for first name, last name, or f+last pattern
+        if first in clean_local or last in clean_local or (first[0] + last) in clean_local:
             logger.info("Web dork FOUND: %s", email)
             return email
 
-    # Otherwise return the first one
-    winner = all_found[0]
-    logger.info("Web dork FOUND (generic match): %s", winner)
-    return winner
+    logger.debug("Web dork: found emails but none matched '%s' or '%s'.", first, last)
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

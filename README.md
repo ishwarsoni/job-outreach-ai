@@ -1,12 +1,12 @@
 # Job Outreach Pipeline
 
-Automated outreach pipeline with real email discovery and verification.
+A data-driven outreach pipeline that prioritizes accuracy over volume by discovering and validating real emails from public sources.
 
 ## Why This Exists
 
 Cold outreach is a numbers game, but the numbers only work if the data is accurate and the message is highly relevant. Manual outreach is slow, while automated tools often rely on generic email permutations and send low-effort messages that get ignored. 
 
-This project was built to solve the data reliability problem in job searching. It automates finding the right engineering leaders, aggressively filters out false positives, discovers their actual work emails using public data, and drafts grounded, highly specific outreach.
+This project was built to solve the data reliability problem in job searching. It automates finding the right engineering leaders, filters based on role and company match, discovers their actual work emails using public data, and drafts grounded, specific outreach.
 
 ## Design Decisions & Tradeoffs
 
@@ -23,26 +23,28 @@ To prioritize data accuracy over high-volume spam, this system implements a mult
 2. **LLM Verification:** The system searches for matching LinkedIn profiles and uses an LLM to verify the person currently holds the target role at the target company, filtering out recruiters or individuals with stale job histories.
 3. **Data Pipeline:** It searches the open web, GitHub, and company pages for the target's actual email address. If none is found, it falls back to SMTP probing.
 4. **Draft Generation:** Profiles with discovered or verified emails receive a tailored cold email draft based on your technical background.
-5. **Quality Gate:** To ensure high deliverability, only high-confidence emails (`Found` or `Verified`) are exported to the final CSV. Guessed emails are strictly excluded.
+5. **Quality Gate:** Only high-confidence emails (Found or Verified) are exported. Pattern-based guesses are excluded.
 
-## Real Example Output
+## Demo / Output Preview
 
 **Input:** Company: `Scale AI`, Role: `Engineering Manager`
 
 ```text
-Name: Alex Chen (Anonymized)
+Name: Alex Chen
 Role: Engineering Manager @ Scale AI
 Email: alex.c@scale.com
 Confidence: ✓ Found
 
 Email Draft:
-Hi Alex, 
+Subject: Question about ML infrastructure at Scale AI
 
-I came across your work at Scale AI while exploring teams working on ML infrastructure.
+Hi Alex,
 
-I’m currently a CS student working on motion processing pipelines (SMPL/SMPL-H, BVH data) and recently completed an internship where I debugged and improved large-scale human motion workflows. I’ve also built end-to-end ML systems with FastAPI and XGBoost.
+I came across your work at Scale AI while looking into teams working on ML infrastructure.
 
-I’m trying to understand what kind of problems your team is currently focused on and how someone with my background could contribute. Would you be open to a quick 10–15 min chat?
+I’ve been working on motion processing pipelines (SMPL/SMPL-H, BVH data) and recently built a system that automates outreach by discovering and validating real emails from public sources.
+
+I’d be interested to understand what your team is currently focused on — would you be open to a quick chat?
 
 Thanks,
 Ishwar
