@@ -123,6 +123,18 @@ Steps:
 3. Set the start command: `bash start.sh`
 4. Add environment variable: `NVIDIA_API_KEY`
 
+Recommended settings for reliable cloud deploys:
+
+* Set health check path to `/api/health`
+* Set `SEARCH_BACKEND=ddg` (avoids shared-IP Google 429/CAPTCHA issues)
+* Keep `GOOGLE_COOLDOWN_SECONDS=1800`
+* Use Python `3.11.x` runtime
+
+This repo also includes:
+
+* `render.yaml` for declarative Render service setup
+* `runtime.txt` to pin Python for stable builds
+
 *(Note: SMTP validation probes require outbound port 25, which may be blocked or restricted depending on your host. If blocked, Zora will automatically rely on the public web metadata discovery).*
 
 ## Tech Stack

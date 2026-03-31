@@ -19,7 +19,7 @@ import logging
 import traceback
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -317,9 +317,19 @@ async def _run_pipeline_worker(job_id: str, company: str, title: str, domain: st
 async def serve_index():
     return FileResponse(str(FRONTEND_DIR / "index.html"))
 
+
+@app.head("/")
+async def serve_index_head():
+    return Response(status_code=200)
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.head("/api/health")
+async def health_check_head():
+    return Response(status_code=200)
 
 @app.post("/api/search")
 async def search_pipeline(request: Request, background_tasks: BackgroundTasks):
