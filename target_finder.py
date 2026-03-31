@@ -166,6 +166,31 @@ def _company_mentioned_in_snippet(snippet: str, company: str) -> bool:
     return False
 
 
+def _normalize_token_text(text: str) -> str:
+    """Lowercase and collapse non-alnum for resilient text comparisons."""
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+def _company_strict_match(text: str, company: str) -> bool:
+    """Stricter company match than generic mention check."""
+    if not text or not company:
+        return False
+    hay = _normalize_token_text(text)
+    needle = _normalize_token_text(company)
+    if not hay or not needle:
+        return False
+
+    # Exact phrase match with word boundaries.
+    if re.search(rf"\b{re.escape(needle)}\b", hay):
+        return True
+
+    # Compact fallback (handles names like "ScaleAI").
+    if needle.replace(" ", "") in hay.replace(" ", ""):
+        return True
+
+    return False
+
+
 def _matches_role(text: str, job_title: str) -> bool:
     """Heuristic role match for high-precision filtering."""
     hay = (text or "").lower()
@@ -200,6 +225,27 @@ def _matches_role(text: str, job_title: str) -> bool:
     return matched >= max(1, int(len(tokens) * 0.6))
 
 
+def _evidence_score(raw_title: str, snippet: str, company: str, job_title: str) -> int:
+    """Compute strict evidence score for candidate acceptance.
+
+    Score components:
+      +2 role in headline/title
+      +2 company in headline/title
+      +1 role in snippet
+      +1 company in snippet
+    """
+    score = 0
+    if _matches_role(raw_title, job_title):
+        score += 2
+    if _company_strict_match(raw_title, company):
+        score += 2
+    if _matches_role(snippet, job_title):
+        score += 1
+    if _company_strict_match(snippet, company):
+        score += 1
+    return score
+
+
 def _deterministic_verify_candidates(
     candidates: list[dict],
     job_title: str,
@@ -216,6 +262,10 @@ def _deterministic_verify_candidates(
         if not _company_mentioned_in_snippet(combined, company):
             continue
         if not _matches_role(combined, job_title):
+            continue
+
+        # Require strong evidence from title/snippet to avoid false positives.
+        if _evidence_score(title, snippet, company, job_title) < config.MIN_TARGET_EVIDENCE_SCORE:
             continue
 
         verified.append(c)
@@ -525,6 +575,18 @@ def find_targets(
         # before the LLM gate.
         if combined_text.strip() and not _matches_role(combined_text, job_title):
             logger.debug("  SKIP %s — role/title does not match '%s'.", full_name, job_title)
+            continue
+
+        # Reject weak-evidence candidates early (precision > recall).
+        score = _evidence_score(raw_title, snippet, company, job_title)
+        if score < config.MIN_TARGET_EVIDENCE_SCORE:
+            logger.debug(
+                "  SKIP %s — weak evidence score=%d for '%s' at '%s'.",
+                full_name,
+                score,
+                job_title,
+                company,
+            )
             continue
 
         first_name, last_name = _split_name(full_name)

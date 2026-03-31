@@ -76,6 +76,11 @@ Zora now supports a configurable search backend:
 
 It also applies automatic cooldown after a Google 429 via `GOOGLE_COOLDOWN_SECONDS` so repeated requests do not keep hitting the same block window.
 
+For stricter target quality, set:
+
+* `MIN_TARGET_EVIDENCE_SCORE=3` (default)
+* Increase to `4` for maximum precision (fewer but cleaner profiles)
+
 **Metrics:** 
 * Tested across ~20 tech companies.
 * Yields valid/found emails for ~60% of identified profiles.

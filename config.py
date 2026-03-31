@@ -51,6 +51,7 @@ MAX_SEARCH_RESULTS: int = int(os.getenv("MAX_SEARCH_RESULTS", "10"))
 _default_search_backend = "ddg" if os.getenv("RENDER") else "auto"
 SEARCH_BACKEND: str = os.getenv("SEARCH_BACKEND", _default_search_backend).lower()
 GOOGLE_COOLDOWN_SECONDS: int = int(os.getenv("GOOGLE_COOLDOWN_SECONDS", "1800"))
+MIN_TARGET_EVIDENCE_SCORE: int = int(os.getenv("MIN_TARGET_EVIDENCE_SCORE", "3"))
 
 # ── User-Agent rotation pool ────────────────────────────────────────────────
 USER_AGENTS: list[str] = [
