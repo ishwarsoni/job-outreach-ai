@@ -61,6 +61,20 @@ _TITLE_WORDS = frozenset({
     "intern", "trainee", "senior", "junior", "staff", "principal",
 })
 
+# High-precision founder guardrail for common companies.
+_KNOWN_FOUNDERS: dict[str, set[str]] = {
+    "google": {"larry page", "sergey brin"},
+    "microsoft": {"bill gates", "paul allen"},
+    "amazon": {"jeff bezos"},
+    "meta": {"mark zuckerberg", "eduardo saverin", "dustin moskovitz", "chris hughes", "andrew mccollum"},
+    "apple": {"steve jobs", "steve wozniak", "ronald wayne"},
+    "netflix": {"reed hastings", "marc randolph"},
+    "nvidia": {"jensen huang", "chris malachowsky", "curtis priem"},
+    "openai": {"sam altman", "greg brockman", "ilya sutskever", "wojciech zaremba", "john schulman", "elon musk"},
+    "scale ai": {"alexandr wang", "lucy guo"},
+    "databricks": {"ali ghodsi", "matei zaharia", "ion stoica", "reynold xin", "patrick wendell", "arsalan tavakoli", "andy konwinski"},
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,6 +121,18 @@ def _split_name(full_name: str) -> tuple[str, str]:
     if len(parts) == 1:
         return (parts[0], "")
     return (parts[0], " ".join(parts[1:]))
+
+
+def _is_known_founder(full_name: str, company: str) -> bool:
+    """Return True if full_name matches known founders for company (when configured)."""
+    c = _normalize_token_text(company)
+    known = _KNOWN_FOUNDERS.get(c)
+    if not known:
+        return True
+    n = _normalize_token_text(full_name)
+    if not n:
+        return False
+    return any(k in n for k in known)
 
 
 def _is_linkedin_profile_url(url: str) -> bool:
@@ -225,6 +251,40 @@ def _matches_role(text: str, job_title: str) -> bool:
     return matched >= max(1, int(len(tokens) * 0.6))
 
 
+def _founder_relation_match(raw_title: str, snippet: str, company: str) -> bool:
+    """Return True only when founder/co-founder is explicitly tied to company.
+
+    This avoids cases where text mentions "Founder" and the company separately
+    (e.g. "Founder at Startup | ex-Google").
+    """
+    if not company:
+        return False
+
+    company_norm = _normalize_token_text(company)
+    if not company_norm:
+        return False
+
+    checks = [
+        _normalize_token_text(raw_title),
+        _normalize_token_text(snippet),
+    ]
+
+    rel_patterns = [
+        rf"\b(?:co\s*founder|cofounder|founder|founding)\b[^|\n]{{0,50}}\b(?:at|of)\b[^|\n]{{0,40}}\b{re.escape(company_norm)}\b",
+        rf"\b{re.escape(company_norm)}\b[^|\n]{{0,40}}\b(?:co\s*founder|cofounder|founder|founding)\b",
+    ]
+
+    for text in checks:
+        if not text:
+            continue
+        if any(re.search(pat, text) for pat in rel_patterns):
+            # Exclude obvious "former/ex" contexts.
+            if re.search(r"\b(former|ex|previously|past)\b", text):
+                continue
+            return True
+    return False
+
+
 def _evidence_score(raw_title: str, snippet: str, company: str, job_title: str) -> int:
     """Compute strict evidence score for candidate acceptance.
 
@@ -263,6 +323,16 @@ def _deterministic_verify_candidates(
             continue
         if not _matches_role(combined, job_title):
             continue
+
+        if "founder" in (job_title or "").lower():
+            # Founder role is highly prone to false positives in snippet text.
+            # Require explicit founder-company relation in headline itself.
+            if not _matches_role(title, job_title):
+                continue
+            if not _company_strict_match(title, company):
+                continue
+            if not _founder_relation_match(title, "", company):
+                continue
 
         # Require strong evidence from title/snippet to avoid false positives.
         if _evidence_score(title, snippet, company, job_title) < config.MIN_TARGET_EVIDENCE_SCORE:
@@ -577,6 +647,28 @@ def find_targets(
             logger.debug("  SKIP %s — role/title does not match '%s'.", full_name, job_title)
             continue
 
+        if "founder" in job_title.lower():
+            if not _matches_role(raw_title, job_title):
+                logger.debug("  SKIP %s — founder role missing in title.", full_name)
+                continue
+            if not _company_strict_match(raw_title, company):
+                logger.debug("  SKIP %s — company '%s' missing in title.", full_name, company)
+                continue
+            if not _founder_relation_match(raw_title, "", company):
+                logger.debug(
+                    "  SKIP %s — founder relation to '%s' not explicit in title.",
+                    full_name,
+                    company,
+                )
+                continue
+            if not _is_known_founder(full_name, company):
+                logger.debug(
+                    "  SKIP %s — not in known-founder set for '%s'.",
+                    full_name,
+                    company,
+                )
+                continue
+
         # Reject weak-evidence candidates early (precision > recall).
         score = _evidence_score(raw_title, snippet, company, job_title)
         if score < config.MIN_TARGET_EVIDENCE_SCORE:
@@ -613,6 +705,9 @@ def find_targets(
         targets = []
 
     # Clean up internal fields
+    if "founder" in (job_title or "").lower():
+        targets = [t for t in targets if _is_known_founder(t.get("full_name", ""), company)]
+
     for t in targets:
         t.pop("_raw_title", None)
         t.pop("_snippet", None)
